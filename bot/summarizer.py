@@ -24,7 +24,12 @@ _SYSTEM_PROMPT = (
     "4. Write the summary in the SAME language as the original text.\n"
     "5. Do NOT add information that is not present in the original text.\n"
     "6. Do NOT add meta-commentary like 'Here is the summary' — return ONLY the summary itself.\n"
-    "7. Do NOT use markdown tables — use bullet points or lists instead."
+    "7. Do NOT use markdown tables — use bullet points or lists instead.\n"
+    "8. Format for Telegram HTML: use <b>bold</b> for section titles, "
+    "use numbered lists (1. 2. 3.) and bullet points (•). "
+    "Do NOT use markdown (no # headers, no *bold*, no **bold**). "
+    "Only allowed HTML tags: <b>, <i>, <u>, <code>. "
+    "Do NOT wrap the entire text in any HTML tag — just use inline tags for emphasis."
 )
 
 

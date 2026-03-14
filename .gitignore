@@ -27,8 +27,10 @@ Thumbs.db
 tmp/
 *.tmp
 
+
 OPEN_ROUTER_EXAMPLE.md
 CLAUDE_RULES.md
 CLAUDE.md
 .env.example
 tasks
+OPTIMIZE.md

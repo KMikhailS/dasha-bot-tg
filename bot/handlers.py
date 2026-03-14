@@ -185,10 +185,15 @@ async def _process_audio(
         if status_msg is None:
             return
         pct = current * 100 // total
-        asyncio.run_coroutine_threadsafe(
-            status_msg.edit_text(f"⏳ Транскрибирую аудио… {pct}%"),
-            loop,
-        )
+        try:
+            async def _update_status(p: int = pct) -> None:
+                try:
+                    await status_msg.edit_text(f"⏳ Транскрибирую аудио… {p}%")
+                except Exception:
+                    pass
+            asyncio.run_coroutine_threadsafe(_update_status(), loop)
+        except Exception as exc:
+            logger.warning("Не удалось обновить статус прогресса: %s", exc)
 
     if status_msg:
         await status_msg.edit_text(PREPARING_TEXT)
@@ -217,7 +222,7 @@ async def _process_audio(
     logger.info("Транскрипция отправлена в чат %s", message.chat.id)
 
     if len(text) < 4096:
-        await message.answer(text)
+        await message.answer(text, parse_mode=None)
 
     if status_msg:
         await status_msg.edit_text("✅ Транскрибация завершена!")
@@ -327,8 +332,12 @@ async def _handle_summary(message: Message, text: str, audio_stem: str) -> None:
         await message.answer_document(FSInputFile(summary_path))
         logger.info("Саммари отправлено в чат %s", message.chat.id)
 
-        if len(summary) < 4096:
-            await message.answer(summary)
+        expandable = f"<blockquote expandable>{summary}</blockquote>"
+        if len(expandable) < 4096:
+            try:
+                await message.answer(expandable, parse_mode="HTML")
+            except Exception:
+                await message.answer(summary)
 
         await status_msg.edit_text("✅ Краткий отчёт готов!")
 

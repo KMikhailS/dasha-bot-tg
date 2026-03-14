@@ -266,7 +266,10 @@ def transcribe_audio(
                 )
                 failed_chunks.append(i + 1)
                 if on_progress is not None:
-                    on_progress(i + 1, total)
+                    try:
+                        on_progress(i + 1, total)
+                    except Exception as cb_exc:
+                        logger.warning("Ошибка progress callback: %s", cb_exc)
                 continue
             texts.append(text)
             logger.info("Чанк %d: получено %d символов", i + 1, len(text))
@@ -275,7 +278,10 @@ def transcribe_audio(
             prev_prompt = text[-WHISPER_PROMPT_CHARS:] if text else ""
 
             if on_progress is not None:
-                on_progress(i + 1, total)
+                try:
+                    on_progress(i + 1, total)
+                except Exception as cb_exc:
+                    logger.warning("Ошибка progress callback: %s", cb_exc)
     except Exception as exc:
         raise TranscriptionError(f"Ошибка при транскрибации: {exc}") from exc
     finally:
