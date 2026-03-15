@@ -44,25 +44,21 @@ def back_to_menu_kb() -> InlineKeyboardMarkup:
 
 def post_transcription_kb(record_id: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✨ Саммари", callback_data=f"summary:gen:{record_id}")],
-        [InlineKeyboardButton(text="📋 Протокол встречи", callback_data=f"protocol:gen:{record_id}")],
-        [InlineKeyboardButton(text="📓 Конспект", callback_data=f"notes:gen:{record_id}")],
+        [InlineKeyboardButton(text="✨ Краткий конспект", callback_data=f"summary:gen:{record_id}")],
+        [InlineKeyboardButton(text="💡 Ключевые инсайты", callback_data=f"report:insights:{record_id}")],
+        [InlineKeyboardButton(text="✅ Список задач", callback_data=f"report:action_items:{record_id}")],
         [InlineKeyboardButton(text="❓ Вопросы к тексту", callback_data=f"questions:gen:{record_id}")],
-        [InlineKeyboardButton(text="✏️ Коррекция текста", callback_data=f"edit:gen:{record_id}")],
-        # TODO: включить когда будут готовы дополнительные отчёты (Фаза 3.3)
-        # [InlineKeyboardButton(text="📊 Дополнительные отчёты ▶", callback_data=f"reports:menu:{record_id}")],
+        [InlineKeyboardButton(text="📊 Дополнительные отчёты ▶", callback_data=f"reports:menu:{record_id}")],
         [InlineKeyboardButton(text="🔙 Главное меню", callback_data="menu:main")],
     ])
 
 
 def reports_submenu_kb(record_id: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Action Items", callback_data=f"report:action_items:{record_id}")],
         [InlineKeyboardButton(text="🧠 Mind Map", callback_data=f"report:mind_map:{record_id}")],
         [InlineKeyboardButton(text="📈 SWOT-анализ", callback_data=f"report:swot:{record_id}")],
         [InlineKeyboardButton(text="🕒 Timeline", callback_data=f"report:timeline:{record_id}")],
         [InlineKeyboardButton(text="🗣️ Цитаты спикеров", callback_data=f"report:quotes:{record_id}")],
-        [InlineKeyboardButton(text="💡 Ключевые инсайты", callback_data=f"report:insights:{record_id}")],
         [InlineKeyboardButton(text="🎯 Решения и договорённости", callback_data=f"report:decisions:{record_id}")],
         [InlineKeyboardButton(text="📝 Глоссарий терминов", callback_data=f"report:glossary:{record_id}")],
         [InlineKeyboardButton(text="📊 Статистика текста", callback_data=f"report:stats:{record_id}")],

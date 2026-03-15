@@ -51,6 +51,7 @@ from bot.keyboards import (
 from bot.link_downloader import download_audio_from_url, extract_media_url
 from bot.payment import create_payment, get_payment_status
 from bot.summarizer import summarize_text
+from bot.s3_storage import upload_text
 from bot.transcriber import TranscriptionError, transcribe_audio
 
 logger = logging.getLogger(__name__)
@@ -373,16 +374,17 @@ async def _process_audio(
     if status_msg:
         await status_msg.edit_text("⏳ Отправляю результат…")
 
-    # Сохраняем запись в БД
+    # Сохраняем запись в БД + текст в S3
     record_id = uuid.uuid4().hex[:16]
     user_id = message.from_user.id if message.from_user else 0
     title = audio_stem[:100] or "Запись"
     try:
+        s3_key = await asyncio.to_thread(upload_text, user_id, record_id, text, audio_stem)
         save_record(
             record_id=record_id,
             user_id=user_id,
             title=title,
-            transcription_text=text,
+            text_s3_key=s3_key,
         )
     except Exception as exc:
         logger.error("Ошибка сохранения записи: %s", exc)
@@ -394,8 +396,8 @@ async def _process_audio(
     await message.answer_document(FSInputFile(txt_path), reply_markup=kb)
     logger.info("Транскрипция отправлена в чат %s", message.chat.id)
 
-    if len(text) < 4096:
-        await message.answer(text, parse_mode=None)
+    # if len(text) < 4096:
+    #     await message.answer(text, parse_mode=None)
 
     if status_msg:
         await status_msg.edit_text("✅ Транскрибация завершена!")

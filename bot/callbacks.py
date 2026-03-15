@@ -1,5 +1,6 @@
 """Маршрутизация callback-запросов по префиксам."""
 
+import asyncio
 import logging
 
 from aiogram.fsm.context import FSMContext
@@ -32,6 +33,8 @@ from bot.keyboards import (
     settings_kb,
 )
 from bot.logo import edit_or_send_logo, send_logo
+from bot.report_generator import generate_report
+from bot.s3_storage import delete_object, download_text
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +106,29 @@ async def dispatch_callback(callback: CallbackQuery, state: FSMContext | None = 
         )
         return True
 
+    if payload.startswith("summary:gen:"):
+        record_id = payload.split(":", 2)[2]
+        await _handle_report(callback, "summary", record_id)
+        return True
+
+    if payload.startswith("summary:back:"):
+        record_id = payload.split(":", 2)[2]
+        await edit_or_send_logo(callback.message, "✅ Что сделать с текстом?",
+                                reply_markup=post_transcription_kb(record_id))
+        return True
+
+    if payload.startswith("questions:gen:"):
+        record_id = payload.split(":", 2)[2]
+        await _handle_report(callback, "questions", record_id)
+        return True
+
+    if payload.startswith("report:"):
+        parts = payload.split(":", 2)
+        if len(parts) == 3:
+            report_type, record_id = parts[1], parts[2]
+            await _handle_report(callback, report_type, record_id)
+            return True
+
     if payload.startswith("reports:menu:"):
         record_id = payload.split(":", 2)[2]
         await edit_or_send_logo(callback.message, "📊 Дополнительные отчёты:",
@@ -131,6 +157,93 @@ async def dispatch_callback(callback: CallbackQuery, state: FSMContext | None = 
         return True
 
     return False
+
+
+_REPORT_LABELS = {
+    "summary": "✨ Краткий конспект",
+    "insights": "💡 Ключевые инсайты",
+    "action_items": "✅ Список задач",
+    "questions": "❓ Вопросы к тексту",
+    "mind_map": "🧠 Mind Map",
+    "swot": "📈 SWOT-анализ",
+    "timeline": "🕒 Timeline",
+    "quotes": "🗣️ Цитаты спикеров",
+    "decisions": "🎯 Решения и договорённости",
+    "glossary": "📝 Глоссарий терминов",
+    "stats": "📊 Статистика текста",
+    "translate": "🌐 Перевод",
+    "followup": "📧 Письмо по итогам",
+}
+
+
+async def _load_transcription(record: dict) -> str:
+    """Загрузить текст транскрипции из S3 (или из БД для старых записей)."""
+    s3_key = record.get("text_s3_key")
+    if s3_key:
+        return await asyncio.to_thread(download_text, s3_key)
+    # Fallback для старых записей, сохранённых в БД
+    return record.get("transcription_text") or ""
+
+
+async def _handle_report(callback: CallbackQuery, report_type: str, record_id: str) -> None:
+    """Генерация отчёта по record_id и отправка результата."""
+    record = get_record(record_id)
+    if not record:
+        await edit_or_send_logo(callback.message, "⚠️ Запись не найдена.",
+                                reply_markup=back_to_menu_kb())
+        return
+
+    text = await _load_transcription(record)
+    if not text.strip():
+        await edit_or_send_logo(callback.message, "⚠️ Текст записи пуст.",
+                                reply_markup=post_transcription_kb(record_id))
+        return
+
+    label = _REPORT_LABELS.get(report_type, report_type)
+    status_msg = await callback.message.answer(f"⏳ Генерирую: {label}…")
+
+    result = await asyncio.to_thread(generate_report, report_type, text)
+
+    if not result:
+        try:
+            await status_msg.edit_text(f"❌ Не удалось сгенерировать: {label}")
+        except Exception:
+            pass
+        return
+
+    try:
+        await status_msg.edit_text(f"✅ {label} готов!")
+    except Exception:
+        pass
+
+    # Отправляем результат в expandable blockquote, если влезает
+    expandable = f"<blockquote expandable>{result}</blockquote>"
+    if len(expandable) < 4096:
+        try:
+            await callback.message.answer(expandable, parse_mode="HTML",
+                                          reply_markup=post_transcription_kb(record_id))
+        except Exception:
+            await callback.message.answer(result, parse_mode=None,
+                                          reply_markup=post_transcription_kb(record_id))
+    else:
+        # Длинный текст — отправляем файлом
+        import os
+        import tempfile
+        from aiogram.types import FSInputFile
+        tmp_dir = tempfile.mkdtemp(prefix="report_")
+        filename = f"{report_type}_{record['title']}.txt"
+        path = os.path.join(tmp_dir, filename)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(result)
+        await callback.message.answer_document(
+            FSInputFile(path),
+            reply_markup=post_transcription_kb(record_id),
+        )
+        try:
+            os.remove(path)
+            os.rmdir(tmp_dir)
+        except OSError:
+            pass
 
 
 async def _show_main_menu(callback: CallbackQuery) -> None:
@@ -230,7 +343,7 @@ async def _handle_record(callback: CallbackQuery, payload: str, state: FSMContex
                                 reply_markup=record_card_kb(record_id))
 
     elif action == "view":
-        text = record.get("transcription_text") or "Текст не найден."
+        text = await _load_transcription(record) or "Текст не найден."
         if len(text) > 4000:
             text = text[:4000] + "…\n\n(текст обрезан)"
         await callback.message.answer(text, parse_mode=None)
@@ -248,6 +361,12 @@ async def _handle_record(callback: CallbackQuery, payload: str, state: FSMContex
         )
 
     elif action == "confirm_delete":
+        s3_key = record.get("text_s3_key")
+        if s3_key:
+            try:
+                await asyncio.to_thread(delete_object, s3_key)
+            except Exception as exc:
+                logger.warning("Не удалось удалить S3 объект %s: %s", s3_key, exc)
         delete_record(record_id)
         await edit_or_send_logo(callback.message, "🗑️ Запись удалена.",
                                 reply_markup=back_to_menu_kb())
@@ -260,7 +379,7 @@ async def _handle_record(callback: CallbackQuery, payload: str, state: FSMContex
                                 reply_markup=back_to_menu_kb())
 
     elif action == "download":
-        text = record.get("transcription_text") or ""
+        text = await _load_transcription(record)
         if not text:
             await callback.message.answer("⚠️ Текст записи пуст.")
             return
