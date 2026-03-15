@@ -109,14 +109,32 @@ def settings_kb(settings: dict) -> InlineKeyboardMarkup:
     ])
 
 
-def records_list_kb(records: list[dict]) -> InlineKeyboardMarkup:
+RECORDS_PAGE_SIZE = 5
+
+
+def records_list_kb(records: list[dict], page: int = 0) -> InlineKeyboardMarkup:
+    total = len(records)
+    start = page * RECORDS_PAGE_SIZE
+    end = start + RECORDS_PAGE_SIZE
+    page_records = records[start:end]
+
     buttons = []
-    for r in records:
+    for r in page_records:
         date = r["created_at"][:10] if r.get("created_at") else ""
         label = f"{r['title']} · {date}"
         if len(label) > 60:
             label = label[:57] + "…"
         buttons.append([InlineKeyboardButton(text=label, callback_data=f"record:open:{r['id']}")])
+
+    # Навигация по страницам
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton(text="◀ Назад", callback_data=f"records:page:{page - 1}"))
+    if end < total:
+        nav.append(InlineKeyboardButton(text="Вперёд ▶", callback_data=f"records:page:{page + 1}"))
+    if nav:
+        buttons.append(nav)
+
     buttons.append([InlineKeyboardButton(text="🔙 Главное меню", callback_data="menu:main")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -129,6 +147,13 @@ def record_card_kb(record_id: str) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="📥 Скачать (.txt)", callback_data=f"record:download:{record_id}")],
         [InlineKeyboardButton(text="🗑️ Удалить", callback_data=f"record:delete:{record_id}")],
         [InlineKeyboardButton(text="🔙 К списку записей", callback_data="scenario:records")],
+    ])
+
+
+def delete_confirm_kb(record_id: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🗑️ Да, удалить", callback_data=f"record:confirm_delete:{record_id}")],
+        [InlineKeyboardButton(text="🔙 Отмена", callback_data=f"record:open:{record_id}")],
     ])
 
 

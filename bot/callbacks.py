@@ -2,7 +2,10 @@
 
 import logging
 
+from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery
+
+from bot.states import RenameRecord
 
 from bot.database import (
     delete_record,
@@ -17,6 +20,7 @@ from bot.database import (
 from bot.keyboards import (
     ONBOARDING_MESSAGES,
     back_to_menu_kb,
+    delete_confirm_kb,
     help_kb,
     main_menu_kb,
     onboarding_kb,
@@ -67,7 +71,7 @@ HELP_FAQ = {
 }
 
 
-async def dispatch_callback(callback: CallbackQuery) -> bool:
+async def dispatch_callback(callback: CallbackQuery, state: FSMContext | None = None) -> bool:
     """Обработать callback по префиксу. Возвращает True если обработан."""
     payload = callback.data or ""
 
@@ -84,7 +88,19 @@ async def dispatch_callback(callback: CallbackQuery) -> bool:
         return True
 
     if payload.startswith("record:"):
-        await _handle_record(callback, payload)
+        await _handle_record(callback, payload, state)
+        return True
+
+    if payload.startswith("records:page:"):
+        page = int(payload.split(":", 2)[2])
+        user_id = callback.from_user.id
+        records = get_user_records(user_id, limit=100)
+        count = len(records)
+        await edit_or_send_logo(
+            callback.message,
+            f"📁 Твои записи ({count} шт.):",
+            reply_markup=records_list_kb(records, page=page),
+        )
         return True
 
     if payload.startswith("reports:menu:"):
@@ -154,8 +170,8 @@ async def _handle_scenario(callback: CallbackQuery, payload: str) -> None:
 
     elif scenario == "records":
         user_id = callback.from_user.id
-        count = get_records_count(user_id)
-        if count == 0:
+        records = get_user_records(user_id, limit=100)
+        if not records:
             from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
             kb = InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="🎤 Записать аудио", callback_data="scenario:record")],
@@ -167,11 +183,10 @@ async def _handle_scenario(callback: CallbackQuery, payload: str) -> None:
                 reply_markup=kb,
             )
         else:
-            records = get_user_records(user_id)
             await edit_or_send_logo(
                 callback.message,
-                f"📁 Твои записи ({count} шт.):",
-                reply_markup=records_list_kb(records),
+                f"📁 Твои записи ({len(records)} шт.):",
+                reply_markup=records_list_kb(records, page=0),
             )
 
     elif scenario == "referral":
@@ -193,7 +208,7 @@ async def _handle_scenario(callback: CallbackQuery, payload: str) -> None:
         await edit_or_send_logo(callback.message, "❓ Чем могу помочь?", reply_markup=help_kb())
 
 
-async def _handle_record(callback: CallbackQuery, payload: str) -> None:
+async def _handle_record(callback: CallbackQuery, payload: str, state: FSMContext | None = None) -> None:
     parts = payload.split(":", 2)
     if len(parts) < 3:
         return
@@ -225,11 +240,22 @@ async def _handle_record(callback: CallbackQuery, payload: str) -> None:
                                 reply_markup=post_transcription_kb(record_id))
 
     elif action == "delete":
+        title = record["title"]
+        await edit_or_send_logo(
+            callback.message,
+            f"🗑️ Удалить запись «{title}»?\nЭто действие нельзя отменить.",
+            reply_markup=delete_confirm_kb(record_id),
+        )
+
+    elif action == "confirm_delete":
         delete_record(record_id)
         await edit_or_send_logo(callback.message, "🗑️ Запись удалена.",
                                 reply_markup=back_to_menu_kb())
 
     elif action == "rename":
+        if state:
+            await state.set_state(RenameRecord.waiting_for_title)
+            await state.update_data(rename_record_id=record_id)
         await edit_or_send_logo(callback.message, "✏️ Отправь новое название для записи:",
                                 reply_markup=back_to_menu_kb())
 

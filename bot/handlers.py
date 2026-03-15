@@ -8,6 +8,7 @@ import uuid
 
 from aiogram import Bot, F, Router
 from aiogram.filters import Command, CommandStart
+from aiogram.fsm.context import FSMContext
 from aiogram.types import (
     CallbackQuery,
     FSInputFile,
@@ -16,18 +17,22 @@ from aiogram.types import (
     Message,
 )
 
+from bot.states import RenameRecord
+
 from bot.audio_splitter import extract_audio
 from bot.callbacks import dispatch_callback
 from bot.config import SUPPORTED_AUDIO_EXTENSIONS
 from bot.logo import send_logo
 from bot.database import (
     get_or_create_user,
+    get_record,
     get_records_count,
     get_user_balance,
     get_user_records,
     get_user_settings,
     is_user_onboarded,
     mark_payment_paid,
+    rename_record,
     save_payment,
     save_record,
     set_user_onboarded,
@@ -108,8 +113,8 @@ async def cmd_upload(message: Message) -> None:
 @router.message(Command("records"))
 async def cmd_records(message: Message) -> None:
     user_id = message.from_user.id if message.from_user else 0
-    count = get_records_count(user_id)
-    if count == 0:
+    records = get_user_records(user_id, limit=100)
+    if not records:
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🎤 Записать аудио", callback_data="scenario:record")],
             [InlineKeyboardButton(text="🔙 Главное меню", callback_data="menu:main")],
@@ -120,11 +125,10 @@ async def cmd_records(message: Message) -> None:
             reply_markup=kb,
         )
     else:
-        records = get_user_records(user_id)
         await send_logo(
             message,
-            f"📁 Твои записи ({count} шт.):",
-            reply_markup=records_list_kb(records),
+            f"📁 Твои записи ({len(records)} шт.):",
+            reply_markup=records_list_kb(records, page=0),
         )
 
 
@@ -226,6 +230,34 @@ async def on_audio(message: Message, bot: Bot) -> None:
         _cleanup_tmp(tmp_dir)
 
 
+@router.message(RenameRecord.waiting_for_title, F.text)
+async def on_rename_title(message: Message, state: FSMContext) -> None:
+    data = await state.get_data()
+    record_id = data.get("rename_record_id")
+    await state.clear()
+
+    new_title = (message.text or "").strip()[:100]
+    if not new_title:
+        await message.answer("⚠️ Название не может быть пустым.")
+        return
+
+    if not record_id:
+        await message.answer("⚠️ Запись не найдена.")
+        return
+
+    rename_record(record_id, new_title)
+    record = get_record(record_id)
+    if record:
+        from bot.keyboards import record_card_kb
+        await send_logo(
+            message,
+            f"✅ Запись переименована в «{new_title}»",
+            reply_markup=record_card_kb(record_id),
+        )
+    else:
+        await send_logo(message, "✅ Запись переименована.", reply_markup=back_to_menu_kb())
+
+
 @router.message(F.text)
 async def on_text(message: Message, bot: Bot) -> None:
     url = extract_media_url(message.text or "")
@@ -236,13 +268,13 @@ async def on_text(message: Message, bot: Bot) -> None:
 
 
 @router.callback_query()
-async def on_callback(callback: CallbackQuery, bot: Bot) -> None:
+async def on_callback(callback: CallbackQuery, bot: Bot, state: FSMContext) -> None:
     await callback.answer()
     payload = callback.data or ""
     user_id = callback.from_user.id
 
     # Новый dispatch по префиксам
-    if await dispatch_callback(callback):
+    if await dispatch_callback(callback, state):
         return
 
     # Legacy-маршруты подписки
