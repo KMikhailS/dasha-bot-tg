@@ -16,6 +16,7 @@ from aiogram.types import (
     Message,
 )
 
+from bot.audio_splitter import extract_audio
 from bot.config import SUPPORTED_AUDIO_EXTENSIONS
 from bot.database import get_or_create_user, get_user_balance, mark_payment_paid, save_payment
 from bot.link_downloader import download_audio_from_url, extract_media_url
@@ -32,19 +33,21 @@ router = Router()
 _summary_context: dict[str, tuple[str, str]] = {}
 
 WELCOME_TEXT = (
-    "👋 Привет! Я Стенограф — бот для расшифровки аудио в текст.\n\n"
-    "Отправь мне аудиофайл (mp3, wav, ogg, m4a и др.) "
-    "или ссылку на YouTube / Instagram / VK / Одноклассники видео, "
-    "и я верну текстовый файл с расшифровкой.\n\n"
-    "Поддерживаемые форматы: mp3, mp4, m4a, wav, webm, ogg, mpeg, mpga.\n"
-    "Ссылки: YouTube, Instagram (Reels, посты с видео), VK Видео, Одноклассники."
+    "Привет! Я Даша 👩\n\n"
+    "Говори – я запишу.\n\n"
+    "Принимаю:\n"
+    "🎵 Аудио и видео файлы\n"
+    "🔗 Ссылки YouTube, VK, Instagram\n"
+    "💬 Голосовые и видеосообщения из Telegram\n\n"
+    "Текст, конспект и задачи — через 2 минуты."
 )
 
 DOWNLOADING_TEXT = "⏳ Скачиваю аудио…"
 PREPARING_TEXT = "⏳ Подготавливаю аудио…"
 
 INVALID_FILE_TEXT = (
-    "❌ Пожалуйста, отправьте аудиофайл или ссылку на YouTube / Instagram / VK / Одноклассники видео.\n"
+    "❌ Пожалуйста, отправьте аудиофайл, голосовое, видеосообщение "
+    "или ссылку на YouTube / Instagram / VK / Одноклассники видео.\n"
     "Поддерживаемые форматы: mp3, mp4, m4a, wav, webm, ogg, mpeg, mpga.\n"
     "Ссылки: YouTube, Instagram (Reels, посты с видео), VK Видео, Одноклассники."
 )
@@ -56,14 +59,24 @@ async def cmd_start(message: Message) -> None:
     await _send_welcome(message)
 
 
-@router.message(F.audio | F.voice | F.document)
+@router.message(F.audio | F.voice | F.video_note | F.video | F.document)
 async def on_audio(message: Message, bot: Bot) -> None:
+    is_video = False
+
     if message.audio:
         file_id = message.audio.file_id
         filename = message.audio.file_name or f"audio_{file_id}.mp3"
     elif message.voice:
         file_id = message.voice.file_id
         filename = f"voice_{file_id}.ogg"
+    elif message.video_note:
+        file_id = message.video_note.file_id
+        filename = f"videonote_{file_id}.mp4"
+        is_video = True
+    elif message.video:
+        file_id = message.video.file_id
+        filename = message.video.file_name or f"video_{file_id}.mp4"
+        is_video = True
     elif message.document:
         file_id = message.document.file_id
         filename = message.document.file_name or ""
@@ -83,6 +96,10 @@ async def on_audio(message: Message, bot: Bot) -> None:
         tg_file = await bot.get_file(file_id)
         await bot.download_file(tg_file.file_path, dest_path)
         logger.info("Скачан файл: %s", dest_path)
+
+        if is_video:
+            dest_path = await extract_audio(dest_path)
+            logger.info("Аудио извлечено из видео: %s", dest_path)
 
         await _process_audio(message, dest_path, tmp_dir, status_msg)
 
@@ -144,7 +161,15 @@ async def _send_welcome(message: Message) -> None:
     kb = InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text="💳 Подписка", callback_data="sub_info"),
     ]])
-    await message.answer(WELCOME_TEXT, reply_markup=kb)
+    logo_path = os.path.join(os.path.dirname(__file__), "..", "images", "dasha-main-logo.png")
+    if os.path.exists(logo_path):
+        await message.answer_photo(
+            photo=FSInputFile(logo_path),
+            caption=WELCOME_TEXT,
+            reply_markup=kb,
+        )
+    else:
+        await message.answer(WELCOME_TEXT, reply_markup=kb)
 
 
 async def _handle_url(message: Message, url: str) -> None:
@@ -179,8 +204,6 @@ async def _process_audio(
     tmp_dir: str,
     status_msg: Message | None,
 ) -> None:
-    loop = asyncio.get_running_loop()
-
     def _report_progress(current: int, total: int) -> None:
         if status_msg is None:
             return
@@ -191,14 +214,14 @@ async def _process_audio(
                     await status_msg.edit_text(f"⏳ Транскрибирую аудио… {p}%")
                 except Exception:
                     pass
-            asyncio.run_coroutine_threadsafe(_update_status(), loop)
+            asyncio.ensure_future(_update_status())
         except Exception as exc:
             logger.warning("Не удалось обновить статус прогресса: %s", exc)
 
     if status_msg:
         await status_msg.edit_text(PREPARING_TEXT)
 
-    text = await asyncio.to_thread(transcribe_audio, audio_path, _report_progress)
+    text = await transcribe_audio(audio_path, _report_progress)
 
     if not text.strip():
         await message.answer("⚠️ Не удалось распознать речь в аудио.")

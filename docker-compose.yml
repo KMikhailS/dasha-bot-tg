@@ -5,3 +5,4 @@ services:
     restart: unless-stopped
     volumes:
       - /root/dasha_data:/app/data
+      - /root/dasha_images:/app/images
