@@ -49,7 +49,8 @@ def post_transcription_kb(record_id: str) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="📓 Конспект", callback_data=f"notes:gen:{record_id}")],
         [InlineKeyboardButton(text="❓ Вопросы к тексту", callback_data=f"questions:gen:{record_id}")],
         [InlineKeyboardButton(text="✏️ Коррекция текста", callback_data=f"edit:gen:{record_id}")],
-        [InlineKeyboardButton(text="📊 Дополнительные отчёты ▶", callback_data=f"reports:menu:{record_id}")],
+        # TODO: включить когда будут готовы дополнительные отчёты (Фаза 3.3)
+        # [InlineKeyboardButton(text="📊 Дополнительные отчёты ▶", callback_data=f"reports:menu:{record_id}")],
         [InlineKeyboardButton(text="🔙 Главное меню", callback_data="menu:main")],
     ])
 
