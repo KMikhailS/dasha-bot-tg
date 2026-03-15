@@ -144,7 +144,7 @@ def error_kb(error_type: str) -> InlineKeyboardMarkup:
         ])
     if error_type == "limit_exceeded":
         return InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="💌 Пригласить подругу", callback_data="scenario:referral")],
+            [InlineKeyboardButton(text="💌 Пригласить друга", callback_data="scenario:referral")],
             [InlineKeyboardButton(text="⭐ Выбрать тариф", callback_data="scenario:plans")],
         ])
     if error_type == "unavailable_link":

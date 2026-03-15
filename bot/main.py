@@ -31,7 +31,7 @@ async def _main() -> None:
         BotCommand(command="records", description="Мои записи"),
         BotCommand(command="plan", description="Тарифы и баланс"),
         BotCommand(command="balance", description="Остаток минут"),
-        BotCommand(command="invite", description="Пригласить подругу"),
+        BotCommand(command="invite", description="Пригласить другa"),
         BotCommand(command="help", description="Помощь и FAQ"),
         BotCommand(command="settings", description="Настройки"),
     ])
