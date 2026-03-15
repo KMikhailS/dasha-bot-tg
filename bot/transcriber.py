@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 import re
@@ -5,7 +6,7 @@ from collections.abc import Callable
 
 from openai import OpenAI
 
-from bot.audio_splitter import cleanup_chunks, split_audio
+from bot.audio_splitter import cleanup_chunks, reencode_chunk, split_audio
 from bot.config import (
     OPENAI_API_KEY,
     SUPPORTED_AUDIO_EXTENSIONS,
@@ -221,7 +222,7 @@ def _transcribe_single(file_path: str, prompt: str = "") -> str:
     return " ".join(good_texts)
 
 
-def transcribe_audio(
+async def transcribe_audio(
     file_path: str,
     on_progress: ProgressCallback | None = None,
 ) -> str:
@@ -247,7 +248,7 @@ def transcribe_audio(
     """
     validate_audio_file(file_path)
 
-    chunk_paths = split_audio(file_path)
+    chunk_paths = await split_audio(file_path)
     total = len(chunk_paths)
     logger.info("Чанков для транскрибации: %d", total)
 
@@ -258,19 +259,39 @@ def transcribe_audio(
         for i, chunk_path in enumerate(chunk_paths):
             logger.info("Транскрибирую чанк %d/%d: %s", i + 1, total, chunk_path)
             try:
-                text = _transcribe_single(chunk_path, prompt=prev_prompt)
+                text = await asyncio.to_thread(
+                    _transcribe_single, chunk_path, prev_prompt,
+                )
             except Exception as exc:
+                # Попытка перекодировать и повторить транскрибацию
                 logger.warning(
-                    "Чанк %d/%d не удалось транскрибировать, пропускаю: %s",
+                    "Чанк %d/%d: ошибка транскрибации, пробую перекодировать: %s",
                     i + 1, total, exc,
                 )
-                failed_chunks.append(i + 1)
-                if on_progress is not None:
+                text = None
+                if await reencode_chunk(chunk_path):
                     try:
-                        on_progress(i + 1, total)
-                    except Exception as cb_exc:
-                        logger.warning("Ошибка progress callback: %s", cb_exc)
-                continue
+                        text = await asyncio.to_thread(
+                            _transcribe_single, chunk_path, prev_prompt,
+                        )
+                    except Exception as retry_exc:
+                        logger.warning(
+                            "Чанк %d/%d не удалось транскрибировать после перекодирования, пропускаю: %s",
+                            i + 1, total, retry_exc,
+                        )
+                else:
+                    logger.warning(
+                        "Чанк %d/%d: перекодирование не удалось, пропускаю",
+                        i + 1, total,
+                    )
+                if text is None:
+                    failed_chunks.append(i + 1)
+                    if on_progress is not None:
+                        try:
+                            on_progress(i + 1, total)
+                        except Exception as cb_exc:
+                            logger.warning("Ошибка progress callback: %s", cb_exc)
+                    continue
             texts.append(text)
             logger.info("Чанк %d: получено %d символов", i + 1, len(text))
 
