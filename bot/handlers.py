@@ -7,7 +7,7 @@ import time
 import uuid
 
 from aiogram import Bot, F, Router
-from aiogram.filters import CommandStart
+from aiogram.filters import Command, CommandStart
 from aiogram.types import (
     CallbackQuery,
     FSInputFile,
@@ -17,8 +17,32 @@ from aiogram.types import (
 )
 
 from bot.audio_splitter import extract_audio
+from bot.callbacks import dispatch_callback
 from bot.config import SUPPORTED_AUDIO_EXTENSIONS
-from bot.database import get_or_create_user, get_user_balance, mark_payment_paid, save_payment
+from bot.logo import send_logo
+from bot.database import (
+    get_or_create_user,
+    get_records_count,
+    get_user_balance,
+    get_user_records,
+    get_user_settings,
+    is_user_onboarded,
+    mark_payment_paid,
+    save_payment,
+    save_record,
+    set_user_onboarded,
+)
+from bot.keyboards import (
+    ONBOARDING_MESSAGES,
+    back_to_menu_kb,
+    help_kb,
+    main_menu_kb,
+    onboarding_kb,
+    plans_kb,
+    post_transcription_kb,
+    records_list_kb,
+    settings_kb,
+)
 from bot.link_downloader import download_audio_from_url, extract_media_url
 from bot.payment import create_payment, get_payment_status
 from bot.summarizer import summarize_text
@@ -33,13 +57,9 @@ router = Router()
 _summary_context: dict[str, tuple[str, str]] = {}
 
 WELCOME_TEXT = (
-    "Привет! Я Даша 👩\n\n"
-    "Говори – я запишу.\n\n"
-    "Принимаю:\n"
-    "🎵 Аудио и видео файлы\n"
-    "🔗 Ссылки YouTube, VK, Instagram\n"
-    "💬 Голосовые и видеосообщения из Telegram\n\n"
-    "Текст, конспект и задачи — через 2 минуты."
+    "Привет! 👋 Я Даша — твой личный транскрибатор.\n"
+    "Записывай голос или загружай файл — я превращу его в текст за секунды ✨\n\n"
+    "Выбери, что хочешь сделать:"
 )
 
 DOWNLOADING_TEXT = "⏳ Скачиваю аудио…"
@@ -56,7 +76,98 @@ INVALID_FILE_TEXT = (
 @router.message(CommandStart())
 async def cmd_start(message: Message) -> None:
     _register_user(message.from_user)
-    await _send_welcome(message)
+    user_id = message.from_user.id if message.from_user else None
+
+    if user_id and not is_user_onboarded(user_id):
+        await send_logo(message, ONBOARDING_MESSAGES[1], reply_markup=onboarding_kb(1))
+    else:
+        await _send_welcome(message)
+
+
+@router.message(Command("record"))
+async def cmd_record(message: Message) -> None:
+    await send_logo(
+        message,
+        "🎤 Готова слушать! Запиши голосовое сообщение — я сразу его расшифрую ✨",
+        reply_markup=back_to_menu_kb(),
+    )
+
+
+@router.message(Command("upload"))
+async def cmd_upload(message: Message) -> None:
+    await send_logo(
+        message,
+        "📤 Отправь мне файл или ссылку — я приму почти всё!\n\n"
+        "🎵 Аудио: MP3, WAV, OGG, FLAC, M4A\n"
+        "🎬 Видео: MP4, AVI, MOV, MKV, WebM\n"
+        "🔗 Ссылки: YouTube, TikTok, VK, Instagram и другие",
+        reply_markup=back_to_menu_kb(),
+    )
+
+
+@router.message(Command("records"))
+async def cmd_records(message: Message) -> None:
+    user_id = message.from_user.id if message.from_user else 0
+    count = get_records_count(user_id)
+    if count == 0:
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🎤 Записать аудио", callback_data="scenario:record")],
+            [InlineKeyboardButton(text="🔙 Главное меню", callback_data="menu:main")],
+        ])
+        await send_logo(
+            message,
+            "📁 Здесь пока пусто. Запиши первое аудио — и оно появится тут!",
+            reply_markup=kb,
+        )
+    else:
+        records = get_user_records(user_id)
+        await send_logo(
+            message,
+            f"📁 Твои записи ({count} шт.):",
+            reply_markup=records_list_kb(records),
+        )
+
+
+@router.message(Command("plan"))
+async def cmd_plan(message: Message) -> None:
+    await send_logo(
+        message,
+        "⭐ Выбери тариф, который подходит именно тебе:",
+        reply_markup=plans_kb(),
+    )
+
+
+@router.message(Command("balance"))
+async def cmd_balance(message: Message) -> None:
+    user_id = message.from_user.id if message.from_user else 0
+    balance = get_user_balance(user_id)
+    await send_logo(
+        message,
+        f"💰 Твой баланс: {balance} руб.",
+        reply_markup=back_to_menu_kb(),
+    )
+
+
+@router.message(Command("invite"))
+async def cmd_invite(message: Message) -> None:
+    await send_logo(
+        message,
+        "💌 Реферальная программа скоро будет доступна!\n"
+        "Пригласи подругу — и вам обеим по +60 минут бесплатно.",
+        reply_markup=back_to_menu_kb(),
+    )
+
+
+@router.message(Command("help"))
+async def cmd_help(message: Message) -> None:
+    await send_logo(message, "❓ Чем могу помочь?", reply_markup=help_kb())
+
+
+@router.message(Command("settings"))
+async def cmd_settings(message: Message) -> None:
+    user_id = message.from_user.id if message.from_user else 0
+    s = get_user_settings(user_id)
+    await send_logo(message, "⚙️ Настройки:", reply_markup=settings_kb(s))
 
 
 @router.message(F.audio | F.voice | F.video_note | F.video | F.document)
@@ -82,10 +193,10 @@ async def on_audio(message: Message, bot: Bot) -> None:
         filename = message.document.file_name or ""
         ext = os.path.splitext(filename)[1].lower()
         if ext not in SUPPORTED_AUDIO_EXTENSIONS:
-            await message.answer(INVALID_FILE_TEXT)
+            await send_logo(message, INVALID_FILE_TEXT)
             return
     else:
-        await message.answer(INVALID_FILE_TEXT)
+        await send_logo(message, INVALID_FILE_TEXT)
         return
 
     status_msg = await message.answer(DOWNLOADING_TEXT)
@@ -121,7 +232,7 @@ async def on_text(message: Message, bot: Bot) -> None:
     if url:
         await _handle_url(message, url)
     else:
-        await message.answer(INVALID_FILE_TEXT)
+        await send_logo(message, INVALID_FILE_TEXT)
 
 
 @router.callback_query()
@@ -130,6 +241,11 @@ async def on_callback(callback: CallbackQuery, bot: Bot) -> None:
     payload = callback.data or ""
     user_id = callback.from_user.id
 
+    # Новый dispatch по префиксам
+    if await dispatch_callback(callback):
+        return
+
+    # Legacy-маршруты подписки
     if payload == "sub_info":
         await _handle_sub_info(callback.message, user_id)
         return
@@ -146,10 +262,11 @@ async def on_callback(callback: CallbackQuery, bot: Bot) -> None:
         await _send_welcome(callback.message)
         return
 
+    # Legacy: саммари по старому callback ID
     context = _summary_context.pop(payload, None)
     if not context:
         await callback.message.answer(
-            "⚠️ Данные для саммари не найдены. Попробуйте отправить аудио ещё раз."
+            "⚠️ Данные не найдены. Попробуйте отправить аудио ещё раз."
         )
         return
 
@@ -158,18 +275,7 @@ async def on_callback(callback: CallbackQuery, bot: Bot) -> None:
 
 
 async def _send_welcome(message: Message) -> None:
-    kb = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="💳 Подписка", callback_data="sub_info"),
-    ]])
-    logo_path = os.path.join(os.path.dirname(__file__), "..", "images", "dasha-main-logo.png")
-    if os.path.exists(logo_path):
-        await message.answer_photo(
-            photo=FSInputFile(logo_path),
-            caption=WELCOME_TEXT,
-            reply_markup=kb,
-        )
-    else:
-        await message.answer(WELCOME_TEXT, reply_markup=kb)
+    await send_logo(message, WELCOME_TEXT, reply_markup=main_menu_kb())
 
 
 async def _handle_url(message: Message, url: str) -> None:
@@ -235,12 +341,24 @@ async def _process_audio(
     if status_msg:
         await status_msg.edit_text("⏳ Отправляю результат…")
 
-    callback_id = uuid.uuid4().hex[:16]
-    _summary_context[callback_id] = (text, audio_stem)
+    # Сохраняем запись в БД
+    record_id = uuid.uuid4().hex[:16]
+    user_id = message.from_user.id if message.from_user else 0
+    title = audio_stem[:100] or "Запись"
+    try:
+        save_record(
+            record_id=record_id,
+            user_id=user_id,
+            title=title,
+            transcription_text=text,
+        )
+    except Exception as exc:
+        logger.error("Ошибка сохранения записи: %s", exc)
 
-    kb = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="📝 Получить краткий конспект", callback_data=callback_id),
-    ]])
+    # Также сохраняем в legacy-контекст для обратной совместимости
+    _summary_context[record_id] = (text, audio_stem)
+
+    kb = post_transcription_kb(record_id)
     await message.answer_document(FSInputFile(txt_path), reply_markup=kb)
     logger.info("Транскрипция отправлена в чат %s", message.chat.id)
 

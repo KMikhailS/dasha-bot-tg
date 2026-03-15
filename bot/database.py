@@ -41,6 +41,7 @@ def init_db() -> None:
             phone           TEXT,
             subscription_id INTEGER,
             role            TEXT    NOT NULL DEFAULT 'USER',
+            is_onboarded    INTEGER NOT NULL DEFAULT 0,
             createstamp     TEXT    NOT NULL,
             changestamp     TEXT    NOT NULL,
             FOREIGN KEY (subscription_id) REFERENCES subscriptions(id)
@@ -67,6 +68,28 @@ def init_db() -> None:
             changestamp TEXT    NOT NULL,
             FOREIGN KEY (user_id) REFERENCES user_info(id)
         );
+
+        CREATE TABLE IF NOT EXISTS records (
+            id              TEXT    PRIMARY KEY,
+            user_id         INTEGER NOT NULL,
+            title           TEXT    NOT NULL,
+            transcription_text TEXT,
+            text_s3_key     TEXT,
+            duration_seconds INTEGER,
+            source_type     TEXT    NOT NULL DEFAULT 'audio',
+            source_url      TEXT,
+            created_at      TEXT    NOT NULL,
+            FOREIGN KEY (user_id) REFERENCES user_info(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS user_settings (
+            user_id                INTEGER PRIMARY KEY,
+            transcription_language TEXT    NOT NULL DEFAULT 'ru',
+            diarization            INTEGER NOT NULL DEFAULT 0,
+            export_format          TEXT    NOT NULL DEFAULT 'txt',
+            auto_title             INTEGER NOT NULL DEFAULT 1,
+            FOREIGN KEY (user_id) REFERENCES user_info(id)
+        );
     """)
 
     # Создаём стартовую подписку если её ещё нет
@@ -85,6 +108,14 @@ def init_db() -> None:
         """,
         (now, now),
     )
+    # Миграция: добавить is_onboarded если отсутствует (для существующих БД)
+    try:
+        conn.execute("SELECT is_onboarded FROM user_info LIMIT 1")
+    except sqlite3.OperationalError:
+        conn.execute("ALTER TABLE user_info ADD COLUMN is_onboarded INTEGER NOT NULL DEFAULT 0")
+        # Существующие пользователи уже видели бота — помечаем как onboarded
+        conn.execute("UPDATE user_info SET is_onboarded = 1")
+
     conn.commit()
     logger.info("База данных инициализирована")
 
@@ -217,3 +248,105 @@ def get_user_balance(user_id: int) -> int:
     if row:
         return row["balance"]
     return 0
+
+
+# ── Онбординг ──────────────────────────────────────────────
+
+def is_user_onboarded(user_id: int) -> bool:
+    conn = _get_conn()
+    row = conn.execute("SELECT is_onboarded FROM user_info WHERE id = ?", (user_id,)).fetchone()
+    return bool(row and row["is_onboarded"])
+
+
+def set_user_onboarded(user_id: int) -> None:
+    conn = _get_conn()
+    now = datetime.now(timezone.utc).isoformat()
+    conn.execute(
+        "UPDATE user_info SET is_onboarded = 1, changestamp = ? WHERE id = ?",
+        (now, user_id),
+    )
+    conn.commit()
+
+
+# ── Записи (records) ──────────────────────────────────────
+
+def save_record(
+    record_id: str,
+    user_id: int,
+    title: str,
+    transcription_text: str | None = None,
+    text_s3_key: str | None = None,
+    duration_seconds: int | None = None,
+    source_type: str = "audio",
+    source_url: str | None = None,
+) -> None:
+    conn = _get_conn()
+    now = datetime.now(timezone.utc).isoformat()
+    conn.execute(
+        """
+        INSERT INTO records (id, user_id, title, transcription_text, text_s3_key,
+                             duration_seconds, source_type, source_url, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (record_id, user_id, title, transcription_text, text_s3_key,
+         duration_seconds, source_type, source_url, now),
+    )
+    conn.commit()
+
+
+def get_user_records(user_id: int, limit: int = 20, offset: int = 0) -> list[dict]:
+    conn = _get_conn()
+    rows = conn.execute(
+        "SELECT id, title, duration_seconds, source_type, created_at "
+        "FROM records WHERE user_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?",
+        (user_id, limit, offset),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_records_count(user_id: int) -> int:
+    conn = _get_conn()
+    row = conn.execute("SELECT COUNT(*) as cnt FROM records WHERE user_id = ?", (user_id,)).fetchone()
+    return row["cnt"] if row else 0
+
+
+def get_record(record_id: str) -> dict | None:
+    conn = _get_conn()
+    row = conn.execute("SELECT * FROM records WHERE id = ?", (record_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def delete_record(record_id: str) -> None:
+    conn = _get_conn()
+    conn.execute("DELETE FROM records WHERE id = ?", (record_id,))
+    conn.commit()
+
+
+def rename_record(record_id: str, new_title: str) -> None:
+    conn = _get_conn()
+    conn.execute("UPDATE records SET title = ? WHERE id = ?", (new_title, record_id))
+    conn.commit()
+
+
+# ── Настройки пользователя ────────────────────────────────
+
+def get_user_settings(user_id: int) -> dict:
+    conn = _get_conn()
+    row = conn.execute("SELECT * FROM user_settings WHERE user_id = ?", (user_id,)).fetchone()
+    if row:
+        return dict(row)
+    # Создаём дефолтные настройки
+    conn.execute("INSERT OR IGNORE INTO user_settings (user_id) VALUES (?)", (user_id,))
+    conn.commit()
+    return {"user_id": user_id, "transcription_language": "ru", "diarization": 0,
+            "export_format": "txt", "auto_title": 1}
+
+
+def update_user_setting(user_id: int, key: str, value: str | int) -> None:
+    allowed = {"transcription_language", "diarization", "export_format", "auto_title"}
+    if key not in allowed:
+        return
+    conn = _get_conn()
+    conn.execute("INSERT OR IGNORE INTO user_settings (user_id) VALUES (?)", (user_id,))
+    conn.execute(f"UPDATE user_settings SET {key} = ? WHERE user_id = ?", (value, user_id))
+    conn.commit()

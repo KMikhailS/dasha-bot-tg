@@ -1,0 +1,154 @@
+"""Все клавиатуры бота (InlineKeyboardMarkup)."""
+
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+
+def main_menu_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🎤 Записать аудио", callback_data="scenario:record")],
+        [InlineKeyboardButton(text="📤 Загрузить файл", callback_data="scenario:upload")],
+        [InlineKeyboardButton(text="📁 Мои записи", callback_data="scenario:records")],
+        [InlineKeyboardButton(text="💌 Пригласи подругу", callback_data="scenario:referral")],
+        [InlineKeyboardButton(text="⭐ Тарифы", callback_data="scenario:plans")],
+        [InlineKeyboardButton(text="❓ Помощь", callback_data="scenario:help")],
+    ])
+
+
+def onboarding_kb(step: int) -> InlineKeyboardMarkup:
+    if step == 1:
+        return InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="Далее ▶", callback_data="onboarding:step:2")],
+        ])
+    if step == 2:
+        return InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="Круто! Далее ▶", callback_data="onboarding:step:3")],
+        ])
+    # step 3
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🚀 Начать!", callback_data="menu:main")],
+    ])
+
+
+ONBOARDING_MESSAGES = {
+    1: "Привет! Я Даша 👋 Я превращаю голос в текст за секунды. Встречи, лекции, заметки — всё сохраню.",
+    2: "Могу сделать саммари, протокол, конспект, выделить задачи и ещё 10+ форматов.",
+    3: "Тебе доступно 30 бесплатных минут. Давай начнём!",
+}
+
+
+def back_to_menu_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 Главное меню", callback_data="menu:main")],
+    ])
+
+
+def post_transcription_kb(record_id: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✨ Саммари", callback_data=f"summary:gen:{record_id}")],
+        [InlineKeyboardButton(text="📋 Протокол встречи", callback_data=f"protocol:gen:{record_id}")],
+        [InlineKeyboardButton(text="📓 Конспект", callback_data=f"notes:gen:{record_id}")],
+        [InlineKeyboardButton(text="❓ Вопросы к тексту", callback_data=f"questions:gen:{record_id}")],
+        [InlineKeyboardButton(text="✏️ Коррекция текста", callback_data=f"edit:gen:{record_id}")],
+        [InlineKeyboardButton(text="📊 Дополнительные отчёты ▶", callback_data=f"reports:menu:{record_id}")],
+        [InlineKeyboardButton(text="🔙 Главное меню", callback_data="menu:main")],
+    ])
+
+
+def reports_submenu_kb(record_id: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Action Items", callback_data=f"report:action_items:{record_id}")],
+        [InlineKeyboardButton(text="🧠 Mind Map", callback_data=f"report:mind_map:{record_id}")],
+        [InlineKeyboardButton(text="📈 SWOT-анализ", callback_data=f"report:swot:{record_id}")],
+        [InlineKeyboardButton(text="🕒 Timeline", callback_data=f"report:timeline:{record_id}")],
+        [InlineKeyboardButton(text="🗣️ Цитаты спикеров", callback_data=f"report:quotes:{record_id}")],
+        [InlineKeyboardButton(text="💡 Ключевые инсайты", callback_data=f"report:insights:{record_id}")],
+        [InlineKeyboardButton(text="🎯 Решения и договорённости", callback_data=f"report:decisions:{record_id}")],
+        [InlineKeyboardButton(text="📝 Глоссарий терминов", callback_data=f"report:glossary:{record_id}")],
+        [InlineKeyboardButton(text="📊 Статистика текста", callback_data=f"report:stats:{record_id}")],
+        [InlineKeyboardButton(text="🌐 Перевод", callback_data=f"report:translate:{record_id}")],
+        [InlineKeyboardButton(text="📧 Письмо по итогам", callback_data=f"report:followup:{record_id}")],
+        [InlineKeyboardButton(text="🔙 Назад к действиям", callback_data=f"record:actions:{record_id}")],
+    ])
+
+
+def plans_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🌿 Free — 30 мин (текущий)", callback_data="plan:current:free")],
+        [InlineKeyboardButton(text="💜 Basic — 300 мин / 299₽", callback_data="plan:buy:basic:rub")],
+        [InlineKeyboardButton(text="💎 Pro — 1000 мин / 699₽", callback_data="plan:buy:pro:rub")],
+        [InlineKeyboardButton(text="🚀 Unlimited — безлимит / 1490₽", callback_data="plan:buy:unlimited:rub")],
+        [InlineKeyboardButton(text="🔙 Главное меню", callback_data="menu:main")],
+    ])
+
+
+def help_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🤔 Как записать аудио?", callback_data="help:faq:record")],
+        [InlineKeyboardButton(text="📎 Какие форматы поддерживаются?", callback_data="help:faq:formats")],
+        [InlineKeyboardButton(text="🌐 Как загрузить с YouTube?", callback_data="help:faq:youtube")],
+        [InlineKeyboardButton(text="💳 Как оплатить?", callback_data="help:faq:payment")],
+        [InlineKeyboardButton(text="👤 Связаться с поддержкой", callback_data="help:faq:support")],
+        [InlineKeyboardButton(text="🔙 Главное меню", callback_data="menu:main")],
+    ])
+
+
+def settings_kb(settings: dict) -> InlineKeyboardMarkup:
+    lang = settings.get("transcription_language", "ru")
+    lang_label = {"ru": "🇷🇺 Русский", "en": "🇬🇧 English", "auto": "🤖 Авто"}.get(lang, lang)
+    diar = "✅ Вкл" if settings.get("diarization") else "❌ Выкл"
+    fmt = settings.get("export_format", "txt").upper()
+    auto_t = "✅ Вкл" if settings.get("auto_title", 1) else "❌ Выкл"
+
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"🌐 Язык: {lang_label}", callback_data="settings:lang")],
+        [InlineKeyboardButton(text=f"👥 Спикеры: {diar}", callback_data="settings:diarization")],
+        [InlineKeyboardButton(text=f"📤 Экспорт: {fmt}", callback_data="settings:export")],
+        [InlineKeyboardButton(text=f"⏰ Авто-название: {auto_t}", callback_data="settings:autotitle")],
+        [InlineKeyboardButton(text="🔙 Главное меню", callback_data="menu:main")],
+    ])
+
+
+def records_list_kb(records: list[dict]) -> InlineKeyboardMarkup:
+    buttons = []
+    for r in records:
+        date = r["created_at"][:10] if r.get("created_at") else ""
+        label = f"{r['title']} · {date}"
+        if len(label) > 60:
+            label = label[:57] + "…"
+        buttons.append([InlineKeyboardButton(text=label, callback_data=f"record:open:{r['id']}")])
+    buttons.append([InlineKeyboardButton(text="🔙 Главное меню", callback_data="menu:main")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def record_card_kb(record_id: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="👀 Посмотреть текст", callback_data=f"record:view:{record_id}")],
+        [InlineKeyboardButton(text="✨ Действия", callback_data=f"record:actions:{record_id}")],
+        [InlineKeyboardButton(text="✏️ Переименовать", callback_data=f"record:rename:{record_id}")],
+        [InlineKeyboardButton(text="📥 Скачать (.txt)", callback_data=f"record:download:{record_id}")],
+        [InlineKeyboardButton(text="🗑️ Удалить", callback_data=f"record:delete:{record_id}")],
+        [InlineKeyboardButton(text="🔙 К списку записей", callback_data="scenario:records")],
+    ])
+
+
+def error_kb(error_type: str) -> InlineKeyboardMarkup:
+    if error_type == "transcription_error":
+        return InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔙 Главное меню", callback_data="menu:main")],
+        ])
+    if error_type == "unsupported_format":
+        return InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📤 Загрузить другой файл", callback_data="scenario:upload")],
+            [InlineKeyboardButton(text="🔙 Главное меню", callback_data="menu:main")],
+        ])
+    if error_type == "limit_exceeded":
+        return InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="💌 Пригласить подругу", callback_data="scenario:referral")],
+            [InlineKeyboardButton(text="⭐ Выбрать тариф", callback_data="scenario:plans")],
+        ])
+    if error_type == "unavailable_link":
+        return InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📤 Попробовать снова", callback_data="scenario:upload")],
+            [InlineKeyboardButton(text="🔙 Главное меню", callback_data="menu:main")],
+        ])
+    return back_to_menu_kb()
