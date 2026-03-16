@@ -326,7 +326,7 @@ async def _handle_scenario(callback: CallbackQuery, payload: str) -> None:
             callback.message,
             "📤 Отправь мне файл или ссылку — я приму почти всё!\n\n"
             "🎵 Аудио: MP3, WAV, OGG, FLAC, M4A\n"
-            "🎬 Видео: MP4, AVI, MOV, MKV, WebM\n"
+            # "🎬 Видео: MP4, AVI, MOV, MKV, WebM\n"
             "🔗 Ссылки: YouTube, TikTok, VK, Instagram и другие",
             reply_markup=back_to_menu_kb(),
             image="send_file",
