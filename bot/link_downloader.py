@@ -2,7 +2,6 @@ import logging
 import re
 
 import yt_dlp
-from pytubefix import YouTube
 
 logger = logging.getLogger(__name__)
 
@@ -33,52 +32,8 @@ def extract_media_url(text: str) -> str | None:
     return None
 
 
-def _is_youtube_url(url: str) -> bool:
-    return bool(_YOUTUBE_PATTERN.match(url))
-
-
-def _download_youtube_audio(url: str, dest_dir: str) -> str:
-    """Скачать аудиодорожку из YouTube через pytubefix.
-
-    Возвращает путь к скачанному аудиофайлу (m4a/webm).
-    """
-    yt = YouTube(url)
-    stream = yt.streams.get_audio_only()
-    if not stream:
-        raise RuntimeError("Не удалось найти аудио-поток для этого видео")
-
-    output_path = stream.download(output_path=dest_dir)
-    if not output_path:
-        raise RuntimeError("Не удалось скачать аудио из YouTube")
-
-    return output_path
-
-
-def _download_other_audio(url: str, dest_dir: str) -> str:
-    """Скачать аудиодорожку из Instagram/VK/OK через yt-dlp.
-
-    Возвращает путь к скачанному аудиофайлу.
-    """
-    output_template = f"{dest_dir}/%(title).50s.%(ext)s"
-
-    ydl_opts = {
-        "format": "bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio/best",
-        "outtmpl": output_template,
-        "noplaylist": True,
-        "quiet": True,
-        "no_warnings": True,
-    }
-
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(url, download=True)
-        return ydl.prepare_filename(info)
-
-
 def download_audio_from_url(url: str, dest_dir: str) -> str:
-    """Скачать аудиодорожку из YouTube/Instagram/VK/OK.
-
-    YouTube — через pytubefix (с fallback на yt-dlp).
-    Остальные платформы — через yt-dlp.
+    """Скачать аудиодорожку из YouTube/Instagram через yt-dlp.
 
     Args:
         url: ссылка на видео.
@@ -90,17 +45,33 @@ def download_audio_from_url(url: str, dest_dir: str) -> str:
     Raises:
         RuntimeError: если скачивание не удалось.
     """
+    output_template = f"{dest_dir}/%(title).50s.%(ext)s"
+
+    ydl_opts = {
+        "format": "bestaudio/best",
+        "outtmpl": output_template,
+        "postprocessors": [
+            {
+                "key": "FFmpegExtractAudio",
+                "preferredcodec": "mp3",
+                "preferredquality": "192",
+            },
+        ],
+        "noplaylist": True,
+        "quiet": True,
+        "no_warnings": True,
+    }
+
     logger.info("Скачиваю аудио из: %s", url)
 
     try:
-        if _is_youtube_url(url):
-            try:
-                audio_path = _download_youtube_audio(url, dest_dir)
-            except Exception as exc:
-                logger.warning("pytubefix не справился, пробую yt-dlp: %s", exc)
-                audio_path = _download_other_audio(url, dest_dir)
-        else:
-            audio_path = _download_other_audio(url, dest_dir)
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            # yt-dlp после постобработки меняет расширение на mp3
+            filename = ydl.prepare_filename(info)
+            # Заменяем расширение на .mp3 (постпроцессор конвертирует)
+            audio_path = re.sub(r"\.[^.]+$", ".mp3", filename)
+
     except Exception as exc:
         raise RuntimeError(f"Не удалось скачать аудио: {exc}") from exc
 
