@@ -7,15 +7,13 @@ from aiogram.types import BotCommand
 from bot.config import TELEGRAM_BOT_TOKEN, validate_config
 from bot.database import init_db
 from bot.handlers import router
+from bot.logging_config import setup_logging
 
 logger = logging.getLogger(__name__)
 
 
 async def _main() -> None:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    )
+    setup_logging()
 
     validate_config()
     init_db()

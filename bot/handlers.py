@@ -73,7 +73,7 @@ WELCOME_TEXT = (
     "👋 Привет! Я Даша.\n\n"
     "Говори — я запишу.\n\n"
     "Обрабатываю:\n"
-    "🎵 Аудио и видео файлы\n"
+    "🎵 Аудиофайлы\n"
     "🔗 Ссылки YouTube, VK, Instagram\n"
     "💬 Голосовые из Telegram\n\n"
     "Выбери, что хочешь сделать:"
@@ -83,10 +83,9 @@ DOWNLOADING_TEXT = "⏳ Скачиваю аудио…"
 PREPARING_TEXT = "⏳ Подготавливаю аудио…"
 
 INVALID_FILE_TEXT = (
-    "❌ Пожалуйста, отправьте аудиофайл, голосовое, видеосообщение "
-    "или ссылку на YouTube / Instagram / VK / Одноклассники видео.\n"
-    "Поддерживаемые форматы: mp3, mp4, m4a, wav, webm, ogg, mpeg, mpga.\n"
-    "Ссылки: YouTube, Instagram (Reels, посты с видео), VK Видео, Одноклассники."
+    "❌ Пожалуйста, отправьте аудиофайл, голосовое сообщение "
+    "или ссылку на видео/аудио.\n"
+    "Поддерживаемые форматы: mp3, m4a, wav, webm, ogg, mpeg, mpga."
 )
 
 
@@ -290,13 +289,13 @@ async def on_audio(message: Message, bot: Bot) -> None:
         await _process_audio(message, dest_path, tmp_dir, status_msg)
 
     except TranscriptionError as exc:
-        logger.error("Ошибка транскрибации: %s", exc)
-        await send_logo(message, f"❌ {exc}", reply_markup=error_kb("transcription_error"),
-                        image="error")
+        logger.error("[user_id=%s] Ошибка транскрибации файла: %s", user_id, exc)
+        await send_logo(message, "❌ Произошла ошибка при обработке файла. Пожалуйста, напишите в поддержку.",
+                        reply_markup=error_kb("transcription_error"), image="error")
 
     except Exception as exc:
-        logger.exception("Непредвиденная ошибка: %s", exc)
-        await send_logo(message, "❌ Произошла ошибка при обработке файла.",
+        logger.exception("[user_id=%s] Непредвиденная ошибка при обработке файла: %s", user_id, exc)
+        await send_logo(message, "❌ Произошла ошибка при обработке файла. Пожалуйста, напишите в поддержку.",
                         reply_markup=error_kb("transcription_error"), image="error")
 
     finally:
@@ -461,18 +460,18 @@ async def _handle_url(message: Message, url: str) -> None:
         await _process_audio(message, audio_path, tmp_dir, status_msg)
 
     except RuntimeError as exc:
-        logger.error("Ошибка скачивания по ссылке: %s", exc)
-        await send_logo(message, f"❌ {exc}", reply_markup=error_kb("unavailable_link"),
-                        image="error")
+        logger.error("[user_id=%s] Ошибка скачивания по ссылке %s: %s", user_id, url, exc)
+        await send_logo(message, "❌ Не удалось обработать ссылку. Пожалуйста, напишите в поддержку.",
+                        reply_markup=error_kb("unavailable_link"), image="error")
 
     except TranscriptionError as exc:
-        logger.error("Ошибка транскрибации: %s", exc)
-        await send_logo(message, f"❌ {exc}", reply_markup=error_kb("transcription_error"),
-                        image="error")
+        logger.error("[user_id=%s] Ошибка транскрибации по ссылке %s: %s", user_id, url, exc)
+        await send_logo(message, "❌ Произошла ошибка при обработке ссылки. Пожалуйста, напишите в поддержку.",
+                        reply_markup=error_kb("transcription_error"), image="error")
 
     except Exception as exc:
-        logger.exception("Непредвиденная ошибка: %s", exc)
-        await send_logo(message, "❌ Произошла ошибка при обработке ссылки.",
+        logger.exception("[user_id=%s] Непредвиденная ошибка при обработке ссылки %s: %s", user_id, url, exc)
+        await send_logo(message, "❌ Произошла ошибка при обработке ссылки. Пожалуйста, напишите в поддержку.",
                         reply_markup=error_kb("transcription_error"), image="error")
 
     finally:
@@ -684,8 +683,9 @@ async def _handle_summary(message: Message, text: str, audio_stem: str) -> None:
         await status_msg.edit_text("✅ Краткий отчёт готов!")
 
     except Exception as exc:
-        logger.exception("Ошибка при создании саммари: %s", exc)
-        await send_logo(message, "❌ Произошла ошибка при создании саммари.",
+        uid = message.from_user.id if message.from_user else 0
+        logger.exception("[user_id=%s] Ошибка при создании саммари: %s", uid, exc)
+        await send_logo(message, "❌ Произошла ошибка при создании саммари. Пожалуйста, напишите в поддержку.",
                         reply_markup=error_kb("transcription_error"), image="error")
 
     finally:

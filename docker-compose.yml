@@ -6,3 +6,7 @@ services:
     volumes:
       - /root/dasha_data:/app/data
       - /root/dasha_images:/app/images
+      - dasha_logs:/app/logs
+
+volumes:
+  dasha_logs:

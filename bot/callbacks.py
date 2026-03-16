@@ -55,7 +55,7 @@ MAIN_MENU_TEXT = (
     "👋 Привет! Я Даша.\n\n"
     "Говори — я запишу.\n\n"
     "Обрабатываю:\n"
-    "🎵 Аудио и видео файлы\n"
+    "🎵 Аудиофайлы\n"
     "🔗 Ссылки YouTube, VK, Instagram\n"
     "💬 Голосовые из Telegram\n\n"
     "Выбери, что хочешь сделать:"
@@ -71,7 +71,6 @@ HELP_FAQ = {
     "formats": (
         "📎 <b>Поддерживаемые форматы</b>\n\n"
         "🎵 Аудио: MP3, WAV, OGG, FLAC, M4A, AAC, WMA, OPUS\n"
-        "🎬 Видео: MP4, AVI, MOV, MKV, WebM, 3GP\n"
         "🔗 Ссылки: YouTube, TikTok, VK Video, Vimeo, Rutube, ОК, Twitch, Twitter/X, Instagram Reels"
     ),
     "youtube": (
