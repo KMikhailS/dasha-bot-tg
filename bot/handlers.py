@@ -17,19 +17,24 @@ from aiogram.types import (
     Message,
 )
 
-from bot.states import RenameRecord
+from bot.states import AskQuestion, RenameRecord
 
 from bot.audio_splitter import extract_audio
 from bot.callbacks import dispatch_callback
 from bot.config import SUPPORTED_AUDIO_EXTENSIONS
 from bot.logo import send_logo
 from bot.database import (
+    add_referral,
+    deduct_balance,
+    find_user_by_ref_code,
     get_or_create_user,
     get_record,
     get_records_count,
     get_user_balance,
+    get_user_plan_info,
     get_user_records,
     get_user_settings,
+    has_sufficient_balance,
     is_user_onboarded,
     mark_payment_paid,
     rename_record,
@@ -40,6 +45,7 @@ from bot.database import (
 from bot.keyboards import (
     ONBOARDING_MESSAGES,
     back_to_menu_kb,
+    error_kb,
     help_kb,
     main_menu_kb,
     onboarding_kb,
@@ -63,8 +69,12 @@ router = Router()
 _summary_context: dict[str, tuple[str, str]] = {}
 
 WELCOME_TEXT = (
-    "Привет! 👋 Я Даша — твой личный транскрибатор.\n"
-    "Записывай голос или загружай файл — я превращу его в текст за секунды ✨\n\n"
+    "👋 Привет! Я Даша.\n\n"
+    "Говори — я запишу.\n\n"
+    "Обрабатываю:\n"
+    "🎵 Аудио и видео файлы\n"
+    "🔗 Ссылки YouTube, VK, Instagram\n"
+    "💬 Голосовые из Telegram\n\n"
     "Выбери, что хочешь сделать:"
 )
 
@@ -84,6 +94,18 @@ async def cmd_start(message: Message) -> None:
     _register_user(message.from_user)
     user_id = message.from_user.id if message.from_user else None
 
+    # Обработка реферальной ссылки: /start ref_{code}
+    if user_id and message.text:
+        args = message.text.split(maxsplit=1)
+        if len(args) > 1 and args[1].startswith("ref_"):
+            ref_code = args[1][4:]
+            referrer_id = find_user_by_ref_code(ref_code)
+            if referrer_id and referrer_id != user_id:
+                if add_referral(referrer_id, user_id):
+                    await message.answer(
+                        "🎉 Реферальный бонус активирован! Тебе и другу по +60 минут."
+                    )
+
     if user_id and not is_user_onboarded(user_id):
         await send_logo(message, ONBOARDING_MESSAGES[1], reply_markup=onboarding_kb(1))
     else:
@@ -96,6 +118,7 @@ async def cmd_record(message: Message) -> None:
         message,
         "🎤 Готова слушать! Запиши голосовое сообщение — я сразу его расшифрую ✨",
         reply_markup=back_to_menu_kb(),
+        image="voice_message",
     )
 
 
@@ -108,6 +131,7 @@ async def cmd_upload(message: Message) -> None:
         "🎬 Видео: MP4, AVI, MOV, MKV, WebM\n"
         "🔗 Ссылки: YouTube, TikTok, VK, Instagram и другие",
         reply_markup=back_to_menu_kb(),
+        image="send_file",
     )
 
 
@@ -124,48 +148,74 @@ async def cmd_records(message: Message) -> None:
             message,
             "📁 Здесь пока пусто. Запиши первое аудио — и оно появится тут!",
             reply_markup=kb,
+            image="my_notes",
         )
     else:
         await send_logo(
             message,
             f"📁 Твои записи ({len(records)} шт.):",
             reply_markup=records_list_kb(records, page=0),
+            image="my_notes",
         )
 
 
 @router.message(Command("plan"))
 async def cmd_plan(message: Message) -> None:
+    user_id = message.from_user.id if message.from_user else 0
+    plan_info = get_user_plan_info(user_id)
     await send_logo(
         message,
         "⭐ Выбери тариф, который подходит именно тебе:",
-        reply_markup=plans_kb(),
+        reply_markup=plans_kb(current_code=plan_info["code"]),
+        image="payments",
     )
 
 
 @router.message(Command("balance"))
 async def cmd_balance(message: Message) -> None:
     user_id = message.from_user.id if message.from_user else 0
-    balance = get_user_balance(user_id)
+    plan_info = get_user_plan_info(user_id)
+    balance = plan_info["balance"]
+    if balance == -1:
+        balance_str = "безлимит ♾"
+    else:
+        balance_str = f"{balance} мин"
     await send_logo(
         message,
-        f"💰 Твой баланс: {balance} руб.",
+        f"📋 Тариф: {plan_info['name']}\n⏱ Остаток: {balance_str}",
         reply_markup=back_to_menu_kb(),
     )
 
 
 @router.message(Command("invite"))
 async def cmd_invite(message: Message) -> None:
+    from bot.database import get_referral_count, get_referral_minutes_earned, get_user_ref_code
+
+    user_id = message.from_user.id if message.from_user else 0
+    ref_code = get_user_ref_code(user_id)
+    count = get_referral_count(user_id)
+    earned = get_referral_minutes_earned(user_id)
+
+    bot_info = await message.bot.get_me()
+    bot_username = bot_info.username or "dasha_bot"
+    ref_link = f"https://t.me/{bot_username}?start=ref_{ref_code}"
+
     await send_logo(
         message,
-        "💌 Реферальная программа скоро будет доступна!\n"
-        "Пригласи подругу — и вам обеим по +60 минут бесплатно.",
+        f"💌 <b>Пригласи друга!</b>\n\n"
+        f"Поделись ссылкой — и вы оба получите по <b>+60 минут</b> бесплатно.\n\n"
+        f"🔗 Твоя ссылка:\n<code>{ref_link}</code>\n\n"
+        f"👥 Приглашено: {count}\n"
+        f"⏱ Заработано минут: {earned}",
+        parse_mode="HTML",
         reply_markup=back_to_menu_kb(),
+        image="invite_friend",
     )
 
 
 @router.message(Command("help"))
 async def cmd_help(message: Message) -> None:
-    await send_logo(message, "❓ Чем могу помочь?", reply_markup=help_kb())
+    await send_logo(message, "❓ Чем могу помочь?", reply_markup=help_kb(), image="faq")
 
 
 @router.message(Command("settings"))
@@ -177,6 +227,17 @@ async def cmd_settings(message: Message) -> None:
 
 @router.message(F.audio | F.voice | F.video_note | F.video | F.document)
 async def on_audio(message: Message, bot: Bot) -> None:
+    user_id = message.from_user.id if message.from_user else 0
+    if not has_sufficient_balance(user_id):
+        await send_logo(
+            message,
+            "⚠️ У тебя закончились минуты транскрибации.\n"
+            "Пополни баланс или пригласи друга!",
+            reply_markup=error_kb("limit_exceeded"),
+            image="time_limit",
+        )
+        return
+
     is_video = False
 
     if message.audio:
@@ -198,10 +259,12 @@ async def on_audio(message: Message, bot: Bot) -> None:
         filename = message.document.file_name or ""
         ext = os.path.splitext(filename)[1].lower()
         if ext not in SUPPORTED_AUDIO_EXTENSIONS:
-            await send_logo(message, INVALID_FILE_TEXT)
+            await send_logo(message, INVALID_FILE_TEXT,
+                            reply_markup=error_kb("unsupported_format"), image="error")
             return
     else:
-        await send_logo(message, INVALID_FILE_TEXT)
+        await send_logo(message, INVALID_FILE_TEXT,
+                        reply_markup=error_kb("unsupported_format"), image="error")
         return
 
     status_msg = await message.answer(DOWNLOADING_TEXT)
@@ -221,11 +284,13 @@ async def on_audio(message: Message, bot: Bot) -> None:
 
     except TranscriptionError as exc:
         logger.error("Ошибка транскрибации: %s", exc)
-        await message.answer(f"❌ {exc}")
+        await send_logo(message, f"❌ {exc}", reply_markup=error_kb("transcription_error"),
+                        image="error")
 
     except Exception as exc:
         logger.exception("Непредвиденная ошибка: %s", exc)
-        await message.answer("❌ Произошла ошибка при обработке файла.")
+        await send_logo(message, "❌ Произошла ошибка при обработке файла.",
+                        reply_markup=error_kb("transcription_error"), image="error")
 
     finally:
         _cleanup_tmp(tmp_dir)
@@ -259,13 +324,69 @@ async def on_rename_title(message: Message, state: FSMContext) -> None:
         await send_logo(message, "✅ Запись переименована.", reply_markup=back_to_menu_kb())
 
 
+@router.message(AskQuestion.waiting_for_question, F.text)
+async def on_question(message: Message, state: FSMContext) -> None:
+    data = await state.get_data()
+    record_id = data.get("qa_record_id")
+
+    if not record_id:
+        await state.clear()
+        await message.answer("⚠️ Запись не найдена.")
+        return
+
+    record = get_record(record_id)
+    if not record:
+        await state.clear()
+        await message.answer("⚠️ Запись не найдена.")
+        return
+
+    from bot.callbacks import _load_transcription
+    text = await _load_transcription(record)
+    if not text.strip():
+        await state.clear()
+        await message.answer("⚠️ Текст записи пуст.")
+        return
+
+    question = (message.text or "").strip()
+    status_msg = await message.answer("⏳ Ищу ответ на вопрос…")
+
+    from bot.report_generator import answer_question
+    result = await asyncio.to_thread(answer_question, text, question)
+
+    if not result:
+        try:
+            await status_msg.edit_text("❌ Не удалось найти ответ на вопрос.")
+        except Exception:
+            pass
+        return
+
+    try:
+        await status_msg.delete()
+    except Exception:
+        pass
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 Назад к действиям", callback_data=f"questions:back:{record_id}")],
+    ])
+
+    expandable = f"<blockquote expandable>{result}</blockquote>"
+    if len(expandable) < 4096:
+        try:
+            await message.answer(expandable, parse_mode="HTML", reply_markup=kb)
+        except Exception:
+            await message.answer(result, parse_mode=None, reply_markup=kb)
+    else:
+        await message.answer(result, parse_mode=None, reply_markup=kb)
+
+
 @router.message(F.text)
 async def on_text(message: Message, bot: Bot) -> None:
     url = extract_media_url(message.text or "")
     if url:
         await _handle_url(message, url)
     else:
-        await send_logo(message, INVALID_FILE_TEXT)
+        await send_logo(message, INVALID_FILE_TEXT,
+                        reply_markup=error_kb("unsupported_format"), image="error")
 
 
 @router.callback_query()
@@ -312,6 +433,17 @@ async def _send_welcome(message: Message) -> None:
 
 
 async def _handle_url(message: Message, url: str) -> None:
+    user_id = message.from_user.id if message.from_user else 0
+    if not has_sufficient_balance(user_id):
+        await send_logo(
+            message,
+            "⚠️ У тебя закончились минуты транскрибации.\n"
+            "Пополни баланс или пригласи друга!",
+            reply_markup=error_kb("limit_exceeded"),
+            image="time_limit",
+        )
+        return
+
     status_msg = await message.answer("⏳ Скачиваю аудио по ссылке…")
     tmp_dir = tempfile.mkdtemp(prefix="transcriber_url_")
 
@@ -323,15 +455,18 @@ async def _handle_url(message: Message, url: str) -> None:
 
     except RuntimeError as exc:
         logger.error("Ошибка скачивания по ссылке: %s", exc)
-        await message.answer(f"❌ {exc}")
+        await send_logo(message, f"❌ {exc}", reply_markup=error_kb("unavailable_link"),
+                        image="error")
 
     except TranscriptionError as exc:
         logger.error("Ошибка транскрибации: %s", exc)
-        await message.answer(f"❌ {exc}")
+        await send_logo(message, f"❌ {exc}", reply_markup=error_kb("transcription_error"),
+                        image="error")
 
     except Exception as exc:
         logger.exception("Непредвиденная ошибка: %s", exc)
-        await message.answer("❌ Произошла ошибка при обработке ссылки.")
+        await send_logo(message, "❌ Произошла ошибка при обработке ссылки.",
+                        reply_markup=error_kb("transcription_error"), image="error")
 
     finally:
         _cleanup_tmp(tmp_dir)
@@ -374,9 +509,29 @@ async def _process_audio(
     if status_msg:
         await status_msg.edit_text("⏳ Отправляю результат…")
 
+    # Определяем длительность аудио для списания минут
+    duration_seconds = None
+    try:
+        import subprocess
+        probe = await asyncio.to_thread(
+            subprocess.run,
+            ["ffprobe", "-v", "quiet", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", audio_path],
+            capture_output=True, text=True, timeout=10,
+        )
+        if probe.returncode == 0 and probe.stdout.strip():
+            duration_seconds = int(float(probe.stdout.strip()))
+    except Exception as exc:
+        logger.warning("Не удалось определить длительность аудио: %s", exc)
+
+    # Списываем минуты (округляем вверх)
+    user_id = message.from_user.id if message.from_user else 0
+    if duration_seconds and duration_seconds > 0:
+        minutes_to_deduct = max(1, (duration_seconds + 59) // 60)
+        deduct_balance(user_id, minutes_to_deduct)
+
     # Сохраняем запись в БД + текст в S3
     record_id = uuid.uuid4().hex[:16]
-    user_id = message.from_user.id if message.from_user else 0
     title = audio_stem[:100] or "Запись"
     try:
         s3_key = await asyncio.to_thread(upload_text, user_id, record_id, text, audio_stem)
@@ -385,6 +540,7 @@ async def _process_audio(
             user_id=user_id,
             title=title,
             text_s3_key=s3_key,
+            duration_seconds=duration_seconds,
         )
     except Exception as exc:
         logger.error("Ошибка сохранения записи: %s", exc)
@@ -423,7 +579,7 @@ async def _handle_sub_pay(message: Message) -> None:
 async def _handle_sub_topup(message: Message, bot: Bot, user_id: int) -> None:
     await message.answer("⏳ Создаю платёж…")
 
-    result = await asyncio.to_thread(create_payment, 1000, "Пополнение баланса на 1000 руб.")
+    result = await asyncio.to_thread(create_payment, 1000, "Пополнение баланса — тариф Basic")
     if not result:
         await message.answer("❌ Не удалось создать платёж. Попробуйте позже.")
         return
@@ -431,7 +587,7 @@ async def _handle_sub_topup(message: Message, bot: Bot, user_id: int) -> None:
     payment_id, payment_url = result
 
     try:
-        save_payment(payment_id, user_id, 1000)
+        save_payment(payment_id, user_id, 1000, subscription_code="basic")
     except Exception as exc:
         logger.error("Ошибка сохранения платежа %s: %s", payment_id, exc)
 
@@ -443,7 +599,7 @@ async def _handle_sub_topup(message: Message, bot: Bot, user_id: int) -> None:
     loop = asyncio.get_running_loop()
     threading.Thread(
         target=_poll_payment,
-        args=(bot, loop, message.chat.id, user_id, payment_id, 1000),
+        args=(bot, loop, message.chat.id, user_id, payment_id),
         daemon=True,
     ).start()
 
@@ -454,7 +610,6 @@ def _poll_payment(
     chat_id: int,
     user_id: int,
     payment_id: str,
-    amount: int,
 ) -> None:
     """Поллинг статуса платежа каждые 5 сек, до 10 минут."""
     deadline = time.time() + 600
@@ -468,12 +623,16 @@ def _poll_payment(
 
         if status == "succeeded":
             try:
-                mark_payment_paid(payment_id, user_id, amount)
+                mark_payment_paid(payment_id, user_id)
                 new_balance = get_user_balance(user_id)
+                if new_balance == -1:
+                    bal_str = "безлимит ♾"
+                else:
+                    bal_str = f"{new_balance} мин"
                 asyncio.run_coroutine_threadsafe(
                     bot.send_message(
                         chat_id,
-                        f"✅ Оплата прошла успешно!\nВаш баланс: {new_balance} руб.",
+                        f"✅ Оплата прошла успешно!\nТвой баланс: {bal_str}",
                     ),
                     loop,
                 )
@@ -518,7 +677,8 @@ async def _handle_summary(message: Message, text: str, audio_stem: str) -> None:
 
     except Exception as exc:
         logger.exception("Ошибка при создании саммари: %s", exc)
-        await message.answer("❌ Произошла ошибка при создании саммари.")
+        await send_logo(message, "❌ Произошла ошибка при создании саммари.",
+                        reply_markup=error_kb("transcription_error"), image="error")
 
     finally:
         _cleanup_tmp(tmp_dir)

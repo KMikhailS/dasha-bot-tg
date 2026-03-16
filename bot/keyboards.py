@@ -8,7 +8,7 @@ def main_menu_kb() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="🎤 Записать аудио", callback_data="scenario:record")],
         [InlineKeyboardButton(text="📤 Загрузить файл", callback_data="scenario:upload")],
         [InlineKeyboardButton(text="📁 Мои записи", callback_data="scenario:records")],
-        [InlineKeyboardButton(text="💌 Пригласи подругу", callback_data="scenario:referral")],
+        [InlineKeyboardButton(text="💌 Пригласи друга", callback_data="scenario:referral")],
         [InlineKeyboardButton(text="⭐ Тарифы", callback_data="scenario:plans")],
         [InlineKeyboardButton(text="❓ Помощь", callback_data="scenario:help")],
     ])
@@ -48,8 +48,8 @@ def post_transcription_kb(record_id: str) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="💡 Ключевые инсайты", callback_data=f"report:insights:{record_id}")],
         [InlineKeyboardButton(text="✅ Список задач", callback_data=f"report:action_items:{record_id}")],
         [InlineKeyboardButton(text="❓ Вопросы к тексту", callback_data=f"questions:gen:{record_id}")],
-        [InlineKeyboardButton(text="📊 Дополнительные отчёты ▶", callback_data=f"reports:menu:{record_id}")],
-        [InlineKeyboardButton(text="🔙 Главное меню", callback_data="menu:main")],
+        # [InlineKeyboardButton(text="📊 Дополнительные отчёты ▶", callback_data=f"reports:menu:{record_id}")],
+        [InlineKeyboardButton(text="🔙 Назад к записи", callback_data=f"record:open:{record_id}")],
     ])
 
 
@@ -68,14 +68,29 @@ def reports_submenu_kb(record_id: str) -> InlineKeyboardMarkup:
     ])
 
 
-def plans_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🌿 Free — 30 мин (текущий)", callback_data="plan:current:free")],
-        [InlineKeyboardButton(text="💜 Basic — 300 мин / 299₽", callback_data="plan:buy:basic:rub")],
-        [InlineKeyboardButton(text="💎 Pro — 1000 мин / 699₽", callback_data="plan:buy:pro:rub")],
-        [InlineKeyboardButton(text="🚀 Unlimited — безлимит / 1490₽", callback_data="plan:buy:unlimited:rub")],
-        [InlineKeyboardButton(text="🔙 Главное меню", callback_data="menu:main")],
-    ])
+def plans_kb(current_code: str = "free") -> InlineKeyboardMarkup:
+    plans = [
+        ("free", "🌿 Free — 30 мин", 0),
+        ("basic", "💜 Basic — 300 мин / 299₽", 299),
+        ("pro", "💎 Pro — 1000 мин / 699₽", 699),
+        ("unlimited", "🚀 Unlimited — безлимит / 1490₽", 1490),
+    ]
+    buttons = []
+    for code, label, price in plans:
+        if code == current_code:
+            buttons.append([InlineKeyboardButton(
+                text=f"{label} ✅", callback_data=f"plan:current:{code}"
+            )])
+        elif price > 0:
+            buttons.append([InlineKeyboardButton(
+                text=label, callback_data=f"plan:buy:{code}"
+            )])
+        else:
+            buttons.append([InlineKeyboardButton(
+                text=label, callback_data=f"plan:current:{code}"
+            )])
+    buttons.append([InlineKeyboardButton(text="🔙 Главное меню", callback_data="menu:main")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
 def help_kb() -> InlineKeyboardMarkup:

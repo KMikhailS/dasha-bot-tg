@@ -2,19 +2,31 @@
 
 import asyncio
 import logging
+import threading
+import time
 
+from aiogram import Bot
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
 
-from bot.states import RenameRecord
+from bot.states import AskQuestion, RenameRecord
 
 from bot.database import (
+    PLANS,
+    add_referral,
     delete_record,
     get_record,
     get_records_count,
+    get_referral_count,
+    get_referral_minutes_earned,
+    get_user_balance,
+    get_user_plan_info,
     get_user_records,
+    get_user_ref_code,
     get_user_settings,
     is_user_onboarded,
+    mark_payment_paid,
+    save_payment,
     set_user_onboarded,
     update_user_setting,
 )
@@ -33,14 +45,19 @@ from bot.keyboards import (
     settings_kb,
 )
 from bot.logo import edit_or_send_logo, send_logo
+from bot.payment import create_payment, get_payment_status
 from bot.report_generator import generate_report
 from bot.s3_storage import delete_object, download_text
 
 logger = logging.getLogger(__name__)
 
 MAIN_MENU_TEXT = (
-    "Привет! 👋 Я Даша — твой личный транскрибатор.\n"
-    "Записывай голос или загружай файл — я превращу его в текст за секунды ✨\n\n"
+    "👋 Привет! Я Даша.\n\n"
+    "Говори — я запишу.\n\n"
+    "Обрабатываю:\n"
+    "🎵 Аудио и видео файлы\n"
+    "🔗 Ссылки YouTube, VK, Instagram\n"
+    "💬 Голосовые из Telegram\n\n"
     "Выбери, что хочешь сделать:"
 )
 
@@ -103,6 +120,7 @@ async def dispatch_callback(callback: CallbackQuery, state: FSMContext | None = 
             callback.message,
             f"📁 Твои записи ({count} шт.):",
             reply_markup=records_list_kb(records, page=page),
+            image="my_notes",
         )
         return True
 
@@ -119,7 +137,15 @@ async def dispatch_callback(callback: CallbackQuery, state: FSMContext | None = 
 
     if payload.startswith("questions:gen:"):
         record_id = payload.split(":", 2)[2]
-        await _handle_report(callback, "questions", record_id)
+        await _start_qa_mode(callback, record_id, state)
+        return True
+
+    if payload.startswith("questions:back:"):
+        record_id = payload.split(":", 2)[2]
+        if state:
+            await state.clear()
+        await edit_or_send_logo(callback.message, "✅ Что сделать с текстом?",
+                                reply_markup=post_transcription_kb(record_id))
         return True
 
     if payload.startswith("report:"):
@@ -138,8 +164,11 @@ async def dispatch_callback(callback: CallbackQuery, state: FSMContext | None = 
     if payload.startswith("help:faq:"):
         topic = payload.split(":", 2)[2]
         text = HELP_FAQ.get(topic, "Раздел не найден.")
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔙 Назад к вопросам", callback_data="scenario:help")],
+        ])
         await edit_or_send_logo(callback.message, text, parse_mode="HTML",
-                                reply_markup=back_to_menu_kb())
+                                reply_markup=kb, image="faq")
         return True
 
     if payload.startswith("settings:"):
@@ -147,13 +176,11 @@ async def dispatch_callback(callback: CallbackQuery, state: FSMContext | None = 
         return True
 
     if payload.startswith("plan:"):
-        await edit_or_send_logo(callback.message,
-                                "⭐ Скоро здесь можно будет выбрать тариф!",
-                                reply_markup=back_to_menu_kb())
+        await _handle_plan(callback, payload)
         return True
 
     if payload.startswith("referral:"):
-        await send_logo(callback.message, "💌 Реферальная программа скоро будет доступна!")
+        await _handle_referral_callback(callback, payload)
         return True
 
     return False
@@ -246,6 +273,29 @@ async def _handle_report(callback: CallbackQuery, report_type: str, record_id: s
             pass
 
 
+async def _start_qa_mode(callback: CallbackQuery, record_id: str, state: FSMContext | None) -> None:
+    """Перевести пользователя в режим вопросов по тексту."""
+    record = get_record(record_id)
+    if not record:
+        await edit_or_send_logo(callback.message, "⚠️ Запись не найдена.",
+                                reply_markup=back_to_menu_kb())
+        return
+
+    if state:
+        await state.set_state(AskQuestion.waiting_for_question)
+        await state.update_data(qa_record_id=record_id)
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 Назад к действиям", callback_data=f"questions:back:{record_id}")],
+    ])
+    await edit_or_send_logo(
+        callback.message,
+        "❓ Задай любой вопрос по тексту — я отвечу на основе содержания записи.\n\n"
+        "Просто напиши свой вопрос:",
+        reply_markup=kb,
+    )
+
+
 async def _show_main_menu(callback: CallbackQuery) -> None:
     await edit_or_send_logo(callback.message, MAIN_MENU_TEXT, reply_markup=main_menu_kb())
 
@@ -269,6 +319,7 @@ async def _handle_scenario(callback: CallbackQuery, payload: str) -> None:
             callback.message,
             "🎤 Готова слушать! Запиши голосовое сообщение — я сразу его расшифрую ✨",
             reply_markup=back_to_menu_kb(),
+            image="voice_message",
         )
 
     elif scenario == "upload":
@@ -279,6 +330,7 @@ async def _handle_scenario(callback: CallbackQuery, payload: str) -> None:
             "🎬 Видео: MP4, AVI, MOV, MKV, WebM\n"
             "🔗 Ссылки: YouTube, TikTok, VK, Instagram и другие",
             reply_markup=back_to_menu_kb(),
+            image="send_file",
         )
 
     elif scenario == "records":
@@ -294,31 +346,33 @@ async def _handle_scenario(callback: CallbackQuery, payload: str) -> None:
                 callback.message,
                 "📁 Здесь пока пусто. Запиши первое аудио — и оно появится тут!",
                 reply_markup=kb,
+                image="my_notes",
             )
         else:
             await edit_or_send_logo(
                 callback.message,
                 f"📁 Твои записи ({len(records)} шт.):",
                 reply_markup=records_list_kb(records, page=0),
+                image="my_notes",
             )
 
     elif scenario == "referral":
-        await edit_or_send_logo(
-            callback.message,
-            "💌 Реферальная программа скоро будет доступна!\n"
-            "Пригласи подругу — и вам обеим по +60 минут бесплатно.",
-            reply_markup=back_to_menu_kb(),
-        )
+        await _show_referral(callback)
+
 
     elif scenario == "plans":
+        user_id = callback.from_user.id
+        plan_info = get_user_plan_info(user_id)
         await edit_or_send_logo(
             callback.message,
             "⭐ Выбери тариф, который подходит именно тебе:",
-            reply_markup=plans_kb(),
+            reply_markup=plans_kb(current_code=plan_info["code"]),
+            image="payments",
         )
 
     elif scenario == "help":
-        await edit_or_send_logo(callback.message, "❓ Чем могу помочь?", reply_markup=help_kb())
+        await edit_or_send_logo(callback.message, "❓ Чем могу помочь?", reply_markup=help_kb(),
+                                image="faq")
 
 
 async def _handle_record(callback: CallbackQuery, payload: str, state: FSMContext | None = None) -> None:
@@ -330,7 +384,8 @@ async def _handle_record(callback: CallbackQuery, payload: str, state: FSMContex
     record = get_record(record_id)
     if not record:
         await edit_or_send_logo(callback.message, "⚠️ Запись не найдена.",
-                                reply_markup=back_to_menu_kb())
+                                reply_markup=back_to_menu_kb(),
+                                image="my_notes")
         return
 
     if action == "open":
@@ -340,7 +395,8 @@ async def _handle_record(callback: CallbackQuery, payload: str, state: FSMContex
         dur_str = f"{dur // 60}:{dur % 60:02d}" if dur else "—"
         text = f"📄 <b>{title}</b>\n📅 {date}\n⏱ {dur_str}"
         await edit_or_send_logo(callback.message, text, parse_mode="HTML",
-                                reply_markup=record_card_kb(record_id))
+                                reply_markup=record_card_kb(record_id),
+                                image="my_notes")
 
     elif action == "view":
         text = await _load_transcription(record) or "Текст не найден."
@@ -350,7 +406,8 @@ async def _handle_record(callback: CallbackQuery, payload: str, state: FSMContex
 
     elif action == "actions":
         await edit_or_send_logo(callback.message, "✅ Что сделать с текстом?",
-                                reply_markup=post_transcription_kb(record_id))
+                                reply_markup=post_transcription_kb(record_id),
+                                image="my_notes")
 
     elif action == "delete":
         title = record["title"]
@@ -358,6 +415,7 @@ async def _handle_record(callback: CallbackQuery, payload: str, state: FSMContex
             callback.message,
             f"🗑️ Удалить запись «{title}»?\nЭто действие нельзя отменить.",
             reply_markup=delete_confirm_kb(record_id),
+            image="my_notes",
         )
 
     elif action == "confirm_delete":
@@ -369,14 +427,16 @@ async def _handle_record(callback: CallbackQuery, payload: str, state: FSMContex
                 logger.warning("Не удалось удалить S3 объект %s: %s", s3_key, exc)
         delete_record(record_id)
         await edit_or_send_logo(callback.message, "🗑️ Запись удалена.",
-                                reply_markup=back_to_menu_kb())
+                                reply_markup=back_to_menu_kb(),
+                                image="my_notes")
 
     elif action == "rename":
         if state:
             await state.set_state(RenameRecord.waiting_for_title)
             await state.update_data(rename_record_id=record_id)
         await edit_or_send_logo(callback.message, "✏️ Отправь новое название для записи:",
-                                reply_markup=back_to_menu_kb())
+                                reply_markup=back_to_menu_kb(),
+                                image="my_notes")
 
     elif action == "download":
         text = await _load_transcription(record)
@@ -458,3 +518,190 @@ async def _handle_settings(callback: CallbackQuery, payload: str) -> None:
         s = get_user_settings(user_id)
         await edit_or_send_logo(callback.message, "✅ Настройки обновлены!\n\n⚙️ Настройки:",
                                 reply_markup=settings_kb(s))
+
+
+# ── Тарифы и оплата ──────────────────────────────────────
+
+async def _handle_plan(callback: CallbackQuery, payload: str) -> None:
+    """Обработка callback'ов plan:current:{code} и plan:buy:{code}."""
+    parts = payload.split(":")
+    user_id = callback.from_user.id
+
+    if len(parts) >= 3 and parts[1] == "current":
+        # Показать информацию о текущем тарифе
+        plan_info = get_user_plan_info(user_id)
+        balance = plan_info["balance"]
+        if balance == -1:
+            balance_str = "безлимит"
+        else:
+            balance_str = f"{balance} мин"
+        text = (
+            f"📋 <b>Твой тариф: {plan_info['name']}</b>\n\n"
+            f"⏱ Остаток: {balance_str}\n"
+        )
+        await edit_or_send_logo(callback.message, text, parse_mode="HTML",
+                                reply_markup=plans_kb(current_code=plan_info["code"]),
+                                image="payments")
+        return
+
+    if len(parts) >= 3 and parts[1] == "buy":
+        plan_code = parts[2]
+        plan = PLANS.get(plan_code)
+        if not plan:
+            await edit_or_send_logo(callback.message, "⚠️ Тариф не найден.",
+                                    reply_markup=back_to_menu_kb())
+            return
+
+        plan_name, plan_minutes, plan_price = plan
+        if plan_price <= 0:
+            await edit_or_send_logo(callback.message, "🌿 Бесплатный тариф уже активен!",
+                                    reply_markup=back_to_menu_kb())
+            return
+
+        if plan_minutes == -1:
+            minutes_str = "безлимит"
+        else:
+            minutes_str = f"+{plan_minutes} мин"
+
+        # Подтверждение покупки
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(
+                text=f"💳 Оплатить {plan_price}₽",
+                callback_data=f"plan:pay:{plan_code}",
+            )],
+            [InlineKeyboardButton(text="🔙 Назад к тарифам", callback_data="scenario:plans")],
+        ])
+        await edit_or_send_logo(
+            callback.message,
+            f"🛒 <b>Тариф «{plan_name}»</b>\n\n"
+            f"📦 {minutes_str} транскрибации\n"
+            f"💰 Стоимость: {plan_price}₽\n\n"
+            f"Нажми «Оплатить» для перехода к оплате.",
+            parse_mode="HTML",
+            reply_markup=kb,
+        )
+        return
+
+    if len(parts) >= 3 and parts[1] == "pay":
+        plan_code = parts[2]
+        plan = PLANS.get(plan_code)
+        if not plan:
+            await edit_or_send_logo(callback.message, "⚠️ Тариф не найден.",
+                                    reply_markup=back_to_menu_kb())
+            return
+
+        plan_name, _, plan_price = plan
+
+        await callback.message.answer("⏳ Создаю платёж…")
+
+        result = await asyncio.to_thread(
+            create_payment, plan_price, f"Тариф «{plan_name}» — {plan_price}₽"
+        )
+        if not result:
+            await callback.message.answer("❌ Не удалось создать платёж. Попробуй позже.")
+            return
+
+        payment_id, payment_url = result
+
+        try:
+            save_payment(payment_id, user_id, plan_price, subscription_code=plan_code)
+        except Exception as exc:
+            logger.error("Ошибка сохранения платежа %s: %s", payment_id, exc)
+
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="💳 Оплатить", url=payment_url)],
+            [InlineKeyboardButton(text="🔙 Главное меню", callback_data="menu:main")],
+        ])
+        await callback.message.answer("Нажми кнопку ниже для оплаты:", reply_markup=kb)
+
+        # Запускаем поллинг статуса платежа
+        bot: Bot = callback.message.bot
+        loop = asyncio.get_running_loop()
+        threading.Thread(
+            target=_poll_plan_payment,
+            args=(bot, loop, callback.message.chat.id, user_id, payment_id, plan_code),
+            daemon=True,
+        ).start()
+
+
+def _poll_plan_payment(
+    bot: Bot,
+    loop: asyncio.AbstractEventLoop,
+    chat_id: int,
+    user_id: int,
+    payment_id: str,
+    plan_code: str,
+) -> None:
+    """Поллинг статуса платежа каждые 5 сек, до 10 минут."""
+    plan = PLANS.get(plan_code)
+    plan_name = plan[0] if plan else plan_code
+    deadline = time.time() + 600
+
+    while time.time() < deadline:
+        time.sleep(5)
+        try:
+            status = get_payment_status(payment_id)
+        except Exception as exc:
+            logger.error("Ошибка проверки статуса платежа %s: %s", payment_id, exc)
+            continue
+
+        if status == "succeeded":
+            try:
+                mark_payment_paid(payment_id, user_id, subscription_code=plan_code)
+                new_balance = get_user_balance(user_id)
+                if new_balance == -1:
+                    bal_str = "безлимит"
+                else:
+                    bal_str = f"{new_balance} мин"
+                asyncio.run_coroutine_threadsafe(
+                    bot.send_message(
+                        chat_id,
+                        f"✅ Оплата прошла успешно!\n"
+                        f"Тариф «{plan_name}» активирован.\n"
+                        f"Твой баланс: {bal_str}",
+                    ),
+                    loop,
+                )
+            except Exception as exc:
+                logger.error("Ошибка зачисления платежа %s: %s", payment_id, exc)
+            return
+
+        if status == "canceled":
+            asyncio.run_coroutine_threadsafe(
+                bot.send_message(chat_id, "❌ Платёж отменён."),
+                loop,
+            )
+            return
+
+
+# ── Реферальная программа ─────────────────────────────────
+
+async def _show_referral(callback: CallbackQuery) -> None:
+    """Показать реферальную ссылку и статистику."""
+    user_id = callback.from_user.id
+    ref_code = get_user_ref_code(user_id)
+    count = get_referral_count(user_id)
+    earned = get_referral_minutes_earned(user_id)
+
+    bot_info = await callback.message.bot.get_me()
+    bot_username = bot_info.username or "dasha_bot"
+    ref_link = f"https://t.me/{bot_username}?start=ref_{ref_code}"
+
+    text = (
+        f"💌 <b>Пригласи друга!</b>\n\n"
+        f"Поделись ссылкой — и вы оба получите по <b>+60 минут</b> бесплатно.\n\n"
+        f"🔗 Твоя ссылка:\n<code>{ref_link}</code>\n\n"
+        f"👥 Приглашено: {count}\n"
+        f"⏱ Заработано минут: {earned}"
+    )
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 Главное меню", callback_data="menu:main")],
+    ])
+    await edit_or_send_logo(callback.message, text, parse_mode="HTML", reply_markup=kb,
+                            image="invite_friend")
+
+
+async def _handle_referral_callback(callback: CallbackQuery, payload: str) -> None:
+    """Обработка callback'ов referral:*."""
+    # На данный момент все referral: callback'ы ведут на показ реферальной страницы
+    await _show_referral(callback)

@@ -199,6 +199,40 @@ PROMPTS = {
 }
 
 
+def answer_question(transcription: str, question: str) -> str | None:
+    """Ответить на вопрос пользователя по тексту транскрипции."""
+    system_prompt = (
+        "You are a helpful assistant. You receive a transcription of an audio recording "
+        "and a user's question about it. Answer the question based ONLY on the information "
+        "in the transcription.\n\n"
+        "Rules:\n"
+        "1. Answer in the SAME language as the question.\n"
+        "2. Be concise and accurate.\n"
+        "3. If the answer cannot be found in the transcription, say so honestly.\n"
+        "4. Do NOT add information that is not in the transcription.\n"
+        "5. Do NOT mention that your answer is based on the transcription, text, or recording. "
+        "Just answer the question directly without referencing the source.\n"
+        "6. Format for Telegram HTML: use <b>bold</b> for emphasis. "
+        "Only allowed HTML tags: <b>, <i>, <u>, <code>. "
+        "Do NOT use markdown."
+    )
+    try:
+        response = _client.chat.completions.create(
+            model=_MODEL,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"Транскрипция:\n{transcription[:SUMMARIZER_MAX_CHARS]}\n\nВопрос: {question}"},
+            ],
+        )
+        result = response.choices[0].message.content
+        if result and result.strip():
+            return result.strip()
+        return None
+    except Exception as exc:
+        logger.error("Ошибка ответа на вопрос через OpenRouter: %s", exc)
+        return None
+
+
 def generate_report(report_type: str, text: str) -> str | None:
     """Сгенерировать отчёт заданного типа по тексту транскрипции.
 

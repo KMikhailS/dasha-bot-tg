@@ -1,6 +1,7 @@
 import logging
 import sqlite3
 import threading
+import uuid
 from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
@@ -8,6 +9,15 @@ logger = logging.getLogger(__name__)
 DB_PATH = "/app/data/transcriber.db"
 
 _local = threading.local()
+
+# Тарифы: code → (name, minutes, price_rub)
+# minutes = -1 означает безлимит
+PLANS = {
+    "free":      ("Бесплатный", 30, 0),
+    "basic":     ("Базовый", 300, 299),
+    "pro":       ("Про", 1000, 699),
+    "unlimited": ("Безлимит", -1, 1490),
+}
 
 
 def _get_conn() -> sqlite3.Connection:
@@ -28,7 +38,8 @@ def init_db() -> None:
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
             code        TEXT    NOT NULL UNIQUE,
             name        TEXT    NOT NULL,
-            amount     INTEGER NOT NULL DEFAULT 0,
+            amount      INTEGER NOT NULL DEFAULT 0,
+            price       INTEGER NOT NULL DEFAULT 0,
             active      INTEGER NOT NULL DEFAULT 1,
             createstamp TEXT    NOT NULL,
             changestamp TEXT    NOT NULL
@@ -42,6 +53,7 @@ def init_db() -> None:
             subscription_id INTEGER,
             role            TEXT    NOT NULL DEFAULT 'USER',
             is_onboarded    INTEGER NOT NULL DEFAULT 0,
+            ref_code        TEXT,
             createstamp     TEXT    NOT NULL,
             changestamp     TEXT    NOT NULL,
             FOREIGN KEY (subscription_id) REFERENCES subscriptions(id)
@@ -60,12 +72,13 @@ def init_db() -> None:
         );
 
         CREATE TABLE IF NOT EXISTS payments (
-            payment_id  TEXT    PRIMARY KEY,
-            user_id     INTEGER NOT NULL,
-            amount      INTEGER NOT NULL,
-            status      TEXT    NOT NULL DEFAULT 'pending',
-            createstamp TEXT    NOT NULL,
-            changestamp TEXT    NOT NULL,
+            payment_id        TEXT    PRIMARY KEY,
+            user_id           INTEGER NOT NULL,
+            amount            INTEGER NOT NULL,
+            subscription_code TEXT,
+            status            TEXT    NOT NULL DEFAULT 'pending',
+            createstamp       TEXT    NOT NULL,
+            changestamp       TEXT    NOT NULL,
             FOREIGN KEY (user_id) REFERENCES user_info(id)
         );
 
@@ -90,61 +103,89 @@ def init_db() -> None:
             auto_title             INTEGER NOT NULL DEFAULT 1,
             FOREIGN KEY (user_id) REFERENCES user_info(id)
         );
+
+        CREATE TABLE IF NOT EXISTS referrals (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            referrer_id     INTEGER NOT NULL,
+            referred_id     INTEGER NOT NULL UNIQUE,
+            minutes_awarded INTEGER NOT NULL DEFAULT 60,
+            created_at      TEXT    NOT NULL,
+            FOREIGN KEY (referrer_id) REFERENCES user_info(id),
+            FOREIGN KEY (referred_id) REFERENCES user_info(id)
+        );
     """)
 
-    # Создаём стартовую подписку если её ещё нет
-    now = datetime.now(timezone.utc).isoformat()
-    conn.execute(
-        """
-        INSERT OR IGNORE INTO subscriptions (code, name, amount, active, createstamp, changestamp)
-        VALUES ('start', 'Стартовая', 300, 1, ?, ?)
-        """,
-        (now, now),
-    )
-    conn.execute(
-        """
-        INSERT OR IGNORE INTO subscriptions (code, name, amount, active, createstamp, changestamp)
-        VALUES ('basic', 'Базовая', 1000, 1, ?, ?)
-        """,
-        (now, now),
-    )
-    # Миграция: добавить is_onboarded если отсутствует (для существующих БД)
+    # ── Миграции для существующих БД (ДО вставки данных) ──
+
+    # is_onboarded
     try:
         conn.execute("SELECT is_onboarded FROM user_info LIMIT 1")
     except sqlite3.OperationalError:
         conn.execute("ALTER TABLE user_info ADD COLUMN is_onboarded INTEGER NOT NULL DEFAULT 0")
-        # Существующие пользователи уже видели бота — помечаем как onboarded
         conn.execute("UPDATE user_info SET is_onboarded = 1")
+
+    # ref_code
+    try:
+        conn.execute("SELECT ref_code FROM user_info LIMIT 1")
+    except sqlite3.OperationalError:
+        conn.execute("ALTER TABLE user_info ADD COLUMN ref_code TEXT")
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_user_ref_code ON user_info(ref_code)")
+
+    # price в subscriptions
+    try:
+        conn.execute("SELECT price FROM subscriptions LIMIT 1")
+    except sqlite3.OperationalError:
+        conn.execute("ALTER TABLE subscriptions ADD COLUMN price INTEGER NOT NULL DEFAULT 0")
+
+    # subscription_code в payments
+    try:
+        conn.execute("SELECT subscription_code FROM payments LIMIT 1")
+    except sqlite3.OperationalError:
+        conn.execute("ALTER TABLE payments ADD COLUMN subscription_code TEXT")
+
+    # Создаём/обновляем тарифы
+    now = datetime.now(timezone.utc).isoformat()
+    for code, (name, minutes, price) in PLANS.items():
+        conn.execute(
+            """
+            INSERT INTO subscriptions (code, name, amount, price, active, createstamp, changestamp)
+            VALUES (?, ?, ?, ?, 1, ?, ?)
+            ON CONFLICT(code) DO UPDATE SET name=?, amount=?, price=?, changestamp=?
+            """,
+            (code, name, minutes, price, now, now, name, minutes, price, now),
+        )
 
     conn.commit()
     logger.info("База данных инициализирована")
 
 
 def get_or_create_user(user_id: int, username: str | None = None, first_name: str | None = None) -> None:
-    """Записать нового пользователя с подпиской 'start'. Если уже есть — ничего не делать."""
+    """Записать нового пользователя с подпиской 'free'. Если уже есть — ничего не делать."""
     conn = _get_conn()
 
-    # Проверяем, существует ли пользователь
     row = conn.execute("SELECT id FROM user_info WHERE id = ?", (user_id,)).fetchone()
     if row:
         logger.info("Пользователь %d уже существует", user_id)
         return
 
-    # Получаем стартовую подписку
-    sub = conn.execute("SELECT id, amount FROM subscriptions WHERE code = 'start'").fetchone()
+    # Получаем бесплатный тариф
+    sub = conn.execute("SELECT id, amount FROM subscriptions WHERE code = 'free'").fetchone()
+    if not sub:
+        # Fallback на старую подписку
+        sub = conn.execute("SELECT id, amount FROM subscriptions WHERE code = 'start'").fetchone()
     sub_id = sub["id"] if sub else None
-    sub_balance = sub["amount"] if sub else 0
+    sub_balance = sub["amount"] if sub else 30
 
+    ref_code = uuid.uuid4().hex[:8]
     now = datetime.now(timezone.utc).isoformat()
     conn.execute(
         """
-        INSERT INTO user_info (id, username, first_name, subscription_id, role, createstamp, changestamp)
-        VALUES (?, ?, ?, ?, 'USER', ?, ?)
+        INSERT INTO user_info (id, username, first_name, subscription_id, role, ref_code, createstamp, changestamp)
+        VALUES (?, ?, ?, ?, 'USER', ?, ?, ?)
         """,
-        (user_id, username, first_name, sub_id, now, now),
+        (user_id, username, first_name, sub_id, ref_code, now, now),
     )
 
-    # Создаём назначенную подписку с балансом из шаблона
     if sub_id is not None:
         conn.execute(
             """
@@ -158,19 +199,19 @@ def get_or_create_user(user_id: int, username: str | None = None, first_name: st
     logger.info("Создан пользователь %d (%s)", user_id, username or "no username")
 
 
-def save_payment(payment_id: str, user_id: int, amount: int) -> None:
+def save_payment(payment_id: str, user_id: int, amount: int, subscription_code: str | None = None) -> None:
     """Сохранить новый платёж со статусом pending."""
     conn = _get_conn()
     now = datetime.now(timezone.utc).isoformat()
     conn.execute(
         """
-        INSERT INTO payments (payment_id, user_id, amount, status, createstamp, changestamp)
-        VALUES (?, ?, ?, 'pending', ?, ?)
+        INSERT INTO payments (payment_id, user_id, amount, subscription_code, status, createstamp, changestamp)
+        VALUES (?, ?, ?, ?, 'pending', ?, ?)
         """,
-        (payment_id, user_id, amount, now, now),
+        (payment_id, user_id, amount, subscription_code, now, now),
     )
     conn.commit()
-    logger.info("Платёж %s сохранён для пользователя %d", payment_id, user_id)
+    logger.info("Платёж %s сохранён для пользователя %d (план: %s)", payment_id, user_id, subscription_code)
 
 
 def get_pending_payment(user_id: int) -> tuple[str, int] | None:
@@ -188,13 +229,31 @@ def get_pending_payment(user_id: int) -> tuple[str, int] | None:
     return None
 
 
-def mark_payment_paid(payment_id: str, user_id: int, amount: int) -> None:
-    """Зачислить оплату: деактивировать текущую подписку, создать новую (basic), обновить статус платежа.
+def mark_payment_paid(payment_id: str, user_id: int, subscription_code: str | None = None) -> None:
+    """Зачислить оплату: деактивировать текущую подписку, создать новую, обновить статус платежа.
 
-    Всё выполняется в одной транзакции.
+    Если subscription_code не указан, берём его из записи платежа.
+    Минуты тарифа добавляются к текущему балансу (безлимит = -1).
     """
     conn = _get_conn()
     now = datetime.now(timezone.utc).isoformat()
+
+    # Определяем код тарифа
+    if not subscription_code:
+        pay_row = conn.execute(
+            "SELECT subscription_code FROM payments WHERE payment_id = ?", (payment_id,)
+        ).fetchone()
+        subscription_code = pay_row["subscription_code"] if pay_row else "basic"
+
+    # Получаем тариф
+    sub = conn.execute(
+        "SELECT id, amount FROM subscriptions WHERE code = ?", (subscription_code,)
+    ).fetchone()
+    if not sub:
+        logger.error("Подписка с кодом '%s' не найдена в БД", subscription_code)
+        return
+    sub_id = sub["id"]
+    plan_minutes = sub["amount"]  # -1 для безлимита
 
     # Текущий баланс
     row = conn.execute(
@@ -203,12 +262,13 @@ def mark_payment_paid(payment_id: str, user_id: int, amount: int) -> None:
     ).fetchone()
     current_balance = row["balance"] if row else 0
 
-    # id подписки basic
-    basic = conn.execute("SELECT id FROM subscriptions WHERE code = 'basic'").fetchone()
-    if not basic:
-        logger.error("Подписка с кодом 'basic' не найдена в БД")
-        return
-    basic_id = basic["id"]
+    # Рассчитываем новый баланс
+    if plan_minutes == -1:
+        new_balance = -1  # безлимит
+    elif current_balance == -1:
+        new_balance = -1  # уже безлимит — не понижаем
+    else:
+        new_balance = current_balance + plan_minutes
 
     # Деактивировать текущую активную подписку
     conn.execute(
@@ -222,7 +282,13 @@ def mark_payment_paid(payment_id: str, user_id: int, amount: int) -> None:
         INSERT INTO selected_subscriptions (subscription_id, user_id, balance, is_active, createstamp, changestamp)
         VALUES (?, ?, ?, 1, ?, ?)
         """,
-        (basic_id, user_id, current_balance + amount, now, now),
+        (sub_id, user_id, new_balance, now, now),
+    )
+
+    # Обновить user_info.subscription_id
+    conn.execute(
+        "UPDATE user_info SET subscription_id = ?, changestamp = ? WHERE id = ?",
+        (sub_id, now, user_id),
     )
 
     # Обновить статус платежа
@@ -233,8 +299,8 @@ def mark_payment_paid(payment_id: str, user_id: int, amount: int) -> None:
 
     conn.commit()
     logger.info(
-        "Платёж %s зачислен: пользователь %d, баланс %d → %d",
-        payment_id, user_id, current_balance, current_balance + amount,
+        "Платёж %s зачислен: пользователь %d, план '%s', баланс %d → %d",
+        payment_id, user_id, subscription_code, current_balance, new_balance,
     )
 
 
@@ -350,3 +416,143 @@ def update_user_setting(user_id: int, key: str, value: str | int) -> None:
     conn.execute("INSERT OR IGNORE INTO user_settings (user_id) VALUES (?)", (user_id,))
     conn.execute(f"UPDATE user_settings SET {key} = ? WHERE user_id = ?", (value, user_id))
     conn.commit()
+
+
+# ── Баланс и тарифы ──────────────────────────────────────
+
+def deduct_balance(user_id: int, minutes: int) -> bool:
+    """Списать минуты с баланса. Возвращает True если успешно.
+
+    Безлимит (balance == -1) не списывается.
+    """
+    conn = _get_conn()
+    row = conn.execute(
+        "SELECT id, balance FROM selected_subscriptions WHERE user_id = ? AND is_active = 1 ORDER BY id DESC LIMIT 1",
+        (user_id,),
+    ).fetchone()
+    if not row:
+        return False
+
+    current = row["balance"]
+    if current == -1:
+        return True  # безлимит
+
+    if current < minutes:
+        return False
+
+    now = datetime.now(timezone.utc).isoformat()
+    conn.execute(
+        "UPDATE selected_subscriptions SET balance = balance - ?, changestamp = ? WHERE id = ?",
+        (minutes, now, row["id"]),
+    )
+    conn.commit()
+    return True
+
+
+def has_sufficient_balance(user_id: int) -> bool:
+    """Проверить, есть ли у пользователя хоть 1 минута (или безлимит)."""
+    balance = get_user_balance(user_id)
+    return balance == -1 or balance > 0
+
+
+def get_user_plan_info(user_id: int) -> dict:
+    """Получить информацию о текущем тарифе пользователя."""
+    conn = _get_conn()
+    row = conn.execute(
+        """
+        SELECT s.code, s.name, s.amount as plan_minutes, s.price,
+               ss.balance
+        FROM selected_subscriptions ss
+        JOIN subscriptions s ON s.id = ss.subscription_id
+        WHERE ss.user_id = ? AND ss.is_active = 1
+        ORDER BY ss.id DESC LIMIT 1
+        """,
+        (user_id,),
+    ).fetchone()
+    if row:
+        return dict(row)
+    return {"code": "free", "name": "Бесплатный", "plan_minutes": 30, "price": 0, "balance": 0}
+
+
+# ── Реферальная программа ─────────────────────────────────
+
+def get_user_ref_code(user_id: int) -> str:
+    """Получить или сгенерировать реферальный код пользователя."""
+    conn = _get_conn()
+    row = conn.execute("SELECT ref_code FROM user_info WHERE id = ?", (user_id,)).fetchone()
+    if row and row["ref_code"]:
+        return row["ref_code"]
+    # Генерируем код
+    ref_code = uuid.uuid4().hex[:8]
+    now = datetime.now(timezone.utc).isoformat()
+    conn.execute(
+        "UPDATE user_info SET ref_code = ?, changestamp = ? WHERE id = ?",
+        (ref_code, now, user_id),
+    )
+    conn.commit()
+    return ref_code
+
+
+def find_user_by_ref_code(ref_code: str) -> int | None:
+    """Найти user_id по реферальному коду."""
+    conn = _get_conn()
+    row = conn.execute("SELECT id FROM user_info WHERE ref_code = ?", (ref_code,)).fetchone()
+    return row["id"] if row else None
+
+
+def add_referral(referrer_id: int, referred_id: int, minutes: int = 60) -> bool:
+    """Создать реферальную запись и начислить минуты обоим.
+
+    Возвращает False если реферал уже существует или referrer == referred.
+    """
+    if referrer_id == referred_id:
+        return False
+
+    conn = _get_conn()
+    # Проверяем, не привязан ли уже
+    existing = conn.execute(
+        "SELECT id FROM referrals WHERE referred_id = ?", (referred_id,)
+    ).fetchone()
+    if existing:
+        return False
+
+    now = datetime.now(timezone.utc).isoformat()
+    conn.execute(
+        "INSERT INTO referrals (referrer_id, referred_id, minutes_awarded, created_at) VALUES (?, ?, ?, ?)",
+        (referrer_id, referred_id, minutes, now),
+    )
+
+    # Начислить минуты обоим
+    for uid in (referrer_id, referred_id):
+        row = conn.execute(
+            "SELECT id, balance FROM selected_subscriptions WHERE user_id = ? AND is_active = 1 ORDER BY id DESC LIMIT 1",
+            (uid,),
+        ).fetchone()
+        if row and row["balance"] != -1:
+            conn.execute(
+                "UPDATE selected_subscriptions SET balance = balance + ?, changestamp = ? WHERE id = ?",
+                (minutes, now, row["id"]),
+            )
+
+    conn.commit()
+    logger.info("Реферал: %d пригласил %d, начислено %d мин каждому", referrer_id, referred_id, minutes)
+    return True
+
+
+def get_referral_count(user_id: int) -> int:
+    """Количество приглашённых пользователей."""
+    conn = _get_conn()
+    row = conn.execute(
+        "SELECT COUNT(*) as cnt FROM referrals WHERE referrer_id = ?", (user_id,)
+    ).fetchone()
+    return row["cnt"] if row else 0
+
+
+def get_referral_minutes_earned(user_id: int) -> int:
+    """Суммарно заработанных минут по рефералам."""
+    conn = _get_conn()
+    row = conn.execute(
+        "SELECT COALESCE(SUM(minutes_awarded), 0) as total FROM referrals WHERE referrer_id = ?",
+        (user_id,),
+    ).fetchone()
+    return row["total"] if row else 0
