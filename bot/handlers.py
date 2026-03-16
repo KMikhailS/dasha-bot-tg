@@ -33,6 +33,7 @@ from bot.database import (
     get_user_balance,
     get_user_plan_info,
     get_user_records,
+    get_user_role,
     get_user_settings,
     has_sufficient_balance,
     is_user_onboarded,
@@ -103,7 +104,7 @@ async def cmd_start(message: Message) -> None:
             if referrer_id and referrer_id != user_id:
                 if add_referral(referrer_id, user_id):
                     await message.answer(
-                        "🎉 Реферальный бонус активирован! Тебе и другу по +60 минут."
+                        "🎉 Добро пожаловать! Твой друг получил +30 минут за приглашение."
                     )
 
     if user_id and not is_user_onboarded(user_id):
@@ -162,11 +163,17 @@ async def cmd_records(message: Message) -> None:
 @router.message(Command("plan"))
 async def cmd_plan(message: Message) -> None:
     user_id = message.from_user.id if message.from_user else 0
-    plan_info = get_user_plan_info(user_id)
+    balance = get_user_balance(user_id)
+    if balance == -1:
+        balance_str = "безлимит ♾"
+    else:
+        balance_str = f"{balance} мин"
     await send_logo(
         message,
+        f"⏱ Твой баланс: <b>{balance_str}</b>\n\n"
         "⭐ Выбери тариф, который подходит именно тебе:",
-        reply_markup=plans_kb(current_code=plan_info["code"]),
+        parse_mode="HTML",
+        reply_markup=plans_kb(),
         image="payments",
     )
 
@@ -203,7 +210,7 @@ async def cmd_invite(message: Message) -> None:
     await send_logo(
         message,
         f"💌 <b>Пригласи друга!</b>\n\n"
-        f"Поделись ссылкой — и вы оба получите по <b>+60 минут</b> бесплатно.\n\n"
+        f"Поделись ссылкой — и ты получишь <b>+30 минут</b> за каждого друга!\n\n"
         f"🔗 Твоя ссылка:\n<code>{ref_link}</code>\n\n"
         f"👥 Приглашено: {count}\n"
         f"⏱ Заработано минут: {earned}",
@@ -228,7 +235,7 @@ async def cmd_settings(message: Message) -> None:
 @router.message(F.audio | F.voice | F.video_note | F.video | F.document)
 async def on_audio(message: Message, bot: Bot) -> None:
     user_id = message.from_user.id if message.from_user else 0
-    if not has_sufficient_balance(user_id):
+    if get_user_role(user_id) != "ADMIN" and not has_sufficient_balance(user_id):
         await send_logo(
             message,
             "⚠️ У тебя закончились минуты транскрибации.\n"
@@ -434,7 +441,7 @@ async def _send_welcome(message: Message) -> None:
 
 async def _handle_url(message: Message, url: str) -> None:
     user_id = message.from_user.id if message.from_user else 0
-    if not has_sufficient_balance(user_id):
+    if get_user_role(user_id) != "ADMIN" and not has_sufficient_balance(user_id):
         await send_logo(
             message,
             "⚠️ У тебя закончились минуты транскрибации.\n"
@@ -524,11 +531,12 @@ async def _process_audio(
     except Exception as exc:
         logger.warning("Не удалось определить длительность аудио: %s", exc)
 
-    # Списываем минуты (округляем вверх)
+    # Списываем минуты (округляем вверх), кроме ADMIN
     user_id = message.from_user.id if message.from_user else 0
     if duration_seconds and duration_seconds > 0:
-        minutes_to_deduct = max(1, (duration_seconds + 59) // 60)
-        deduct_balance(user_id, minutes_to_deduct)
+        if get_user_role(user_id) != "ADMIN":
+            minutes_to_deduct = max(1, (duration_seconds + 59) // 60)
+            deduct_balance(user_id, minutes_to_deduct)
 
     # Сохраняем запись в БД + текст в S3
     record_id = uuid.uuid4().hex[:16]

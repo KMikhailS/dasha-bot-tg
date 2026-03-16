@@ -362,11 +362,17 @@ async def _handle_scenario(callback: CallbackQuery, payload: str) -> None:
 
     elif scenario == "plans":
         user_id = callback.from_user.id
-        plan_info = get_user_plan_info(user_id)
+        balance = get_user_balance(user_id)
+        if balance == -1:
+            balance_str = "безлимит ♾"
+        else:
+            balance_str = f"{balance} мин"
         await edit_or_send_logo(
             callback.message,
+            f"⏱ Твой баланс: <b>{balance_str}</b>\n\n"
             "⭐ Выбери тариф, который подходит именно тебе:",
-            reply_markup=plans_kb(current_code=plan_info["code"]),
+            parse_mode="HTML",
+            reply_markup=plans_kb(),
             image="payments",
         )
 
@@ -548,7 +554,7 @@ async def _handle_plan(callback: CallbackQuery, payload: str) -> None:
             f"⏱ Остаток: {balance_str}\n"
         )
         await edit_or_send_logo(callback.message, text, parse_mode="HTML",
-                                reply_markup=plans_kb(current_code=plan_info["code"]),
+                                reply_markup=plans_kb(),
                                 image="payments")
         return
 
@@ -697,7 +703,7 @@ async def _show_referral(callback: CallbackQuery) -> None:
 
     text = (
         f"💌 <b>Пригласи друга!</b>\n\n"
-        f"Поделись ссылкой — и вы оба получите по <b>+60 минут</b> бесплатно.\n\n"
+        f"Поделись ссылкой — и ты получишь <b>+30 минут</b> за каждого друга!\n\n"
         f"🔗 Твоя ссылка:\n<code>{ref_link}</code>\n\n"
         f"👥 Приглашено: {count}\n"
         f"⏱ Заработано минут: {earned}"

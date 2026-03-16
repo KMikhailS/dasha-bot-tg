@@ -32,7 +32,7 @@ def onboarding_kb(step: int) -> InlineKeyboardMarkup:
 ONBOARDING_MESSAGES = {
     1: "Привет! Я Даша 👋 Я превращаю голос в текст за секунды. Встречи, лекции, заметки — всё сохраню.",
     2: "Могу сделать саммари, протокол, конспект, выделить задачи и ещё 10+ форматов.",
-    3: "Тебе доступно 30 бесплатных минут. Давай начнём!",
+    3: "Тебе доступно 60 бесплатных минут. Давай начнём!",
 }
 
 
@@ -68,27 +68,17 @@ def reports_submenu_kb(record_id: str) -> InlineKeyboardMarkup:
     ])
 
 
-def plans_kb(current_code: str = "free") -> InlineKeyboardMarkup:
+def plans_kb() -> InlineKeyboardMarkup:
     plans = [
-        ("free", "🌿 Free — 30 мин", 0),
-        ("basic", "💜 Basic — 300 мин / 299₽", 299),
-        ("pro", "💎 Pro — 1000 мин / 699₽", 699),
-        ("unlimited", "🚀 Unlimited — безлимит / 1490₽", 1490),
+        ("basic", "💜 Basic — 100 мин / 200₽"),
+        ("standard", "⭐ Standard — 500 мин / 500₽"),
+        ("pro", "💎 Pro — 5000 мин / 4000₽"),
     ]
     buttons = []
-    for code, label, price in plans:
-        if code == current_code:
-            buttons.append([InlineKeyboardButton(
-                text=f"{label} ✅", callback_data=f"plan:current:{code}"
-            )])
-        elif price > 0:
-            buttons.append([InlineKeyboardButton(
-                text=label, callback_data=f"plan:buy:{code}"
-            )])
-        else:
-            buttons.append([InlineKeyboardButton(
-                text=label, callback_data=f"plan:current:{code}"
-            )])
+    for code, label in plans:
+        buttons.append([InlineKeyboardButton(
+            text=label, callback_data=f"plan:buy:{code}"
+        )])
     buttons.append([InlineKeyboardButton(text="🔙 Главное меню", callback_data="menu:main")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 

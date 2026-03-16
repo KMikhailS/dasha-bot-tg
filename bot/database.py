@@ -13,10 +13,9 @@ _local = threading.local()
 # Тарифы: code → (name, minutes, price_rub)
 # minutes = -1 означает безлимит
 PLANS = {
-    "free":      ("Бесплатный", 30, 0),
-    "basic":     ("Базовый", 300, 299),
-    "pro":       ("Про", 1000, 699),
-    "unlimited": ("Безлимит", -1, 1490),
+    "basic":     ("Basic", 100, 200),
+    "standard":  ("Standard", 500, 500),
+    "pro":       ("Pro", 5000, 4000),
 }
 
 
@@ -145,7 +144,9 @@ def init_db() -> None:
 
     # Создаём/обновляем тарифы
     now = datetime.now(timezone.utc).isoformat()
-    for code, (name, minutes, price) in PLANS.items():
+    # Внутренний тариф для новых пользователей (не отображается в UI)
+    all_plans = {**PLANS, "free": ("Бесплатный", 60, 0)}
+    for code, (name, minutes, price) in all_plans.items():
         conn.execute(
             """
             INSERT INTO subscriptions (code, name, amount, price, active, createstamp, changestamp)
@@ -316,6 +317,15 @@ def get_user_balance(user_id: int) -> int:
     return 0
 
 
+# ── Роль пользователя ─────────────────────────────────────
+
+def get_user_role(user_id: int) -> str:
+    """Получить роль пользователя (USER, ADMIN и т.д.)."""
+    conn = _get_conn()
+    row = conn.execute("SELECT role FROM user_info WHERE id = ?", (user_id,)).fetchone()
+    return row["role"] if row else "USER"
+
+
 # ── Онбординг ──────────────────────────────────────────────
 
 def is_user_onboarded(user_id: int) -> bool:
@@ -471,7 +481,7 @@ def get_user_plan_info(user_id: int) -> dict:
     ).fetchone()
     if row:
         return dict(row)
-    return {"code": "free", "name": "Бесплатный", "plan_minutes": 30, "price": 0, "balance": 0}
+    return {"code": "free", "name": "Бесплатный", "plan_minutes": 60, "price": 0, "balance": 0}
 
 
 # ── Реферальная программа ─────────────────────────────────
@@ -500,8 +510,8 @@ def find_user_by_ref_code(ref_code: str) -> int | None:
     return row["id"] if row else None
 
 
-def add_referral(referrer_id: int, referred_id: int, minutes: int = 60) -> bool:
-    """Создать реферальную запись и начислить минуты обоим.
+def add_referral(referrer_id: int, referred_id: int, minutes: int = 30) -> bool:
+    """Создать реферальную запись и начислить минуты владельцу ссылки.
 
     Возвращает False если реферал уже существует или referrer == referred.
     """
@@ -522,20 +532,19 @@ def add_referral(referrer_id: int, referred_id: int, minutes: int = 60) -> bool:
         (referrer_id, referred_id, minutes, now),
     )
 
-    # Начислить минуты обоим
-    for uid in (referrer_id, referred_id):
-        row = conn.execute(
-            "SELECT id, balance FROM selected_subscriptions WHERE user_id = ? AND is_active = 1 ORDER BY id DESC LIMIT 1",
-            (uid,),
-        ).fetchone()
-        if row and row["balance"] != -1:
-            conn.execute(
-                "UPDATE selected_subscriptions SET balance = balance + ?, changestamp = ? WHERE id = ?",
-                (minutes, now, row["id"]),
-            )
+    # Начислить минуты только владельцу ссылки
+    row = conn.execute(
+        "SELECT id, balance FROM selected_subscriptions WHERE user_id = ? AND is_active = 1 ORDER BY id DESC LIMIT 1",
+        (referrer_id,),
+    ).fetchone()
+    if row and row["balance"] != -1:
+        conn.execute(
+            "UPDATE selected_subscriptions SET balance = balance + ?, changestamp = ? WHERE id = ?",
+            (minutes, now, row["id"]),
+        )
 
     conn.commit()
-    logger.info("Реферал: %d пригласил %d, начислено %d мин каждому", referrer_id, referred_id, minutes)
+    logger.info("Реферал: %d пригласил %d, начислено %d мин владельцу", referrer_id, referred_id, minutes)
     return True
 
 
