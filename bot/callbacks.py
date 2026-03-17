@@ -46,6 +46,7 @@ from bot.keyboards import (
 )
 from bot.logo import edit_or_send_logo, send_logo
 from bot.payment import create_payment, get_payment_status
+from bot.config import SUMMARIZER_MAX_CHARS
 from bot.report_generator import generate_report
 from bot.s3_storage import delete_object, download_text
 
@@ -223,6 +224,12 @@ async def _handle_report(callback: CallbackQuery, report_type: str, record_id: s
     if not text.strip():
         await edit_or_send_logo(callback.message, "⚠️ Текст записи пуст.",
                                 reply_markup=post_transcription_kb(record_id))
+        return
+
+    if len(text) > SUMMARIZER_MAX_CHARS:
+        await callback.message.answer(
+            "❌ Текст записи слишком большой для генерации отчёта: превышен лимит контекста."
+        )
         return
 
     label = _REPORT_LABELS.get(report_type, report_type)

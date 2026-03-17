@@ -21,7 +21,7 @@ WHISPER_AVG_LOGPROB_THRESHOLD = -1.0  # средняя уверенность н
 WHISPER_PROMPT_CHARS = 224  # сколько символов конца предыдущего чанка передавать как prompt
 MAX_FILE_SIZE_MB = 24  # лимит Whisper 25 МБ, берём с запасом
 FORMATTER_MAX_CHARS = 15000  # тексты длиннее этого не форматируем (слишком долго)
-SUMMARIZER_MAX_CHARS = 100000  # тексты длиннее этого не суммаризируем
+SUMMARIZER_MAX_CHARS = 200000  # тексты длиннее этого не суммаризируем
 CHUNK_DURATION_MINUTES = 3  # макс. длительность одного чанка (для прогресса)
 SUPPORTED_AUDIO_EXTENSIONS = {
     ".mp3", ".mp4", ".mpeg", ".mpga", ".m4a", ".wav", ".webm", ".ogg",

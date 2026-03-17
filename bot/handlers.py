@@ -232,7 +232,10 @@ async def cmd_settings(message: Message) -> None:
 
 
 @router.message(F.audio | F.voice | F.video_note | F.video | F.document)
-async def on_audio(message: Message, bot: Bot) -> None:
+async def on_audio(message: Message, bot: Bot, state: FSMContext) -> None:
+    if await state.get_state() is not None:
+        await state.clear()
+        await message.answer("⚠️ Режим вопросов завершён. Начинаю транскрибацию.")
     user_id = message.from_user.id if message.from_user else 0
     if get_user_role(user_id) != "ADMIN" and not has_sufficient_balance(user_id):
         await send_logo(
@@ -332,6 +335,13 @@ async def on_rename_title(message: Message, state: FSMContext) -> None:
 
 @router.message(AskQuestion.waiting_for_question, F.text)
 async def on_question(message: Message, state: FSMContext) -> None:
+    url = extract_media_url(message.text or "")
+    if url:
+        await state.clear()
+        await message.answer("⚠️ Режим вопросов завершён. Начинаю транскрибацию.")
+        await _handle_url(message, url)
+        return
+
     data = await state.get_data()
     record_id = data.get("qa_record_id")
 
