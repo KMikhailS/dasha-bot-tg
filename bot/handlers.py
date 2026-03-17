@@ -69,6 +69,18 @@ router = Router()
 # Ключ: callback payload (уникальный ID), значение: (text, audio_stem)
 _summary_context: dict[str, tuple[str, str]] = {}
 
+# Per-user блокировка: не даём начать новую транскрибацию, пока предыдущая не завершена
+_user_processing_locks: dict[int, asyncio.Lock] = {}
+
+
+def _get_user_lock(user_id: int) -> asyncio.Lock:
+    if user_id not in _user_processing_locks:
+        _user_processing_locks[user_id] = asyncio.Lock()
+    return _user_processing_locks[user_id]
+
+
+BUSY_TEXT = "⏳ Подожди — предыдущий запрос ещё обрабатывается."
+
 WELCOME_TEXT = (
     "👋 Привет! Я Даша.\n\n"
     "Говори — я запишу.\n\n"
@@ -237,72 +249,79 @@ async def on_audio(message: Message, bot: Bot, state: FSMContext) -> None:
         await state.clear()
         await message.answer("⚠️ Режим вопросов завершён. Начинаю транскрибацию.")
     user_id = message.from_user.id if message.from_user else 0
-    if get_user_role(user_id) != "ADMIN" and not has_sufficient_balance(user_id):
-        await send_logo(
-            message,
-            "⚠️ У тебя закончились минуты транскрибации.\n"
-            "Пополни баланс или пригласи друга!",
-            reply_markup=error_kb("limit_exceeded"),
-            image="time_limit",
-        )
+
+    lock = _get_user_lock(user_id)
+    if lock.locked():
+        await message.answer(BUSY_TEXT)
         return
 
-    is_video = False
+    async with lock:
+        if get_user_role(user_id) != "ADMIN" and not has_sufficient_balance(user_id):
+            await send_logo(
+                message,
+                "⚠️ У тебя закончились минуты транскрибации.\n"
+                "Пополни баланс или пригласи друга!",
+                reply_markup=error_kb("limit_exceeded"),
+                image="time_limit",
+            )
+            return
 
-    if message.audio:
-        file_id = message.audio.file_id
-        filename = message.audio.file_name or f"audio_{file_id}.mp3"
-    elif message.voice:
-        file_id = message.voice.file_id
-        filename = f"voice_{file_id}.ogg"
-    elif message.video_note:
-        file_id = message.video_note.file_id
-        filename = f"videonote_{file_id}.mp4"
-        is_video = True
-    elif message.video:
-        file_id = message.video.file_id
-        filename = message.video.file_name or f"video_{file_id}.mp4"
-        is_video = True
-    elif message.document:
-        file_id = message.document.file_id
-        filename = message.document.file_name or ""
-        ext = os.path.splitext(filename)[1].lower()
-        if ext not in SUPPORTED_AUDIO_EXTENSIONS:
+        is_video = False
+
+        if message.audio:
+            file_id = message.audio.file_id
+            filename = message.audio.file_name or f"audio_{file_id}.mp3"
+        elif message.voice:
+            file_id = message.voice.file_id
+            filename = f"voice_{file_id}.ogg"
+        elif message.video_note:
+            file_id = message.video_note.file_id
+            filename = f"videonote_{file_id}.mp4"
+            is_video = True
+        elif message.video:
+            file_id = message.video.file_id
+            filename = message.video.file_name or f"video_{file_id}.mp4"
+            is_video = True
+        elif message.document:
+            file_id = message.document.file_id
+            filename = message.document.file_name or ""
+            ext = os.path.splitext(filename)[1].lower()
+            if ext not in SUPPORTED_AUDIO_EXTENSIONS:
+                await send_logo(message, INVALID_FILE_TEXT,
+                                reply_markup=error_kb("unsupported_format"), image="error")
+                return
+        else:
             await send_logo(message, INVALID_FILE_TEXT,
                             reply_markup=error_kb("unsupported_format"), image="error")
             return
-    else:
-        await send_logo(message, INVALID_FILE_TEXT,
-                        reply_markup=error_kb("unsupported_format"), image="error")
-        return
 
-    status_msg = await message.answer(DOWNLOADING_TEXT)
-    tmp_dir = tempfile.mkdtemp(prefix="transcriber_")
+        status_msg = await message.answer(DOWNLOADING_TEXT)
+        tmp_dir = tempfile.mkdtemp(prefix="transcriber_")
 
-    try:
-        dest_path = os.path.join(tmp_dir, filename)
-        tg_file = await bot.get_file(file_id)
-        await bot.download_file(tg_file.file_path, dest_path)
-        logger.info("Скачан файл: %s", dest_path)
+        try:
+            dest_path = os.path.join(tmp_dir, filename)
+            tg_file = await bot.get_file(file_id)
+            await bot.download_file(tg_file.file_path, dest_path)
+            logger.info("Скачан файл: %s", dest_path)
 
-        if is_video:
-            dest_path = await extract_audio(dest_path)
-            logger.info("Аудио извлечено из видео: %s", dest_path)
+            if is_video:
+                dest_path = await extract_audio(dest_path)
+                logger.info("Аудио извлечено из видео: %s", dest_path)
 
-        await _process_audio(message, dest_path, tmp_dir, status_msg)
+            await _process_audio(message, dest_path, tmp_dir, status_msg)
 
-    except TranscriptionError as exc:
-        logger.error("[user_id=%s] Ошибка транскрибации файла: %s", user_id, exc)
-        await send_logo(message, "❌ Произошла ошибка при обработке файла. Пожалуйста, напишите в поддержку.",
-                        reply_markup=error_kb("transcription_error"), image="error")
+        except TranscriptionError as exc:
+            logger.error("[user_id=%s] Ошибка транскрибации файла: %s", user_id, exc)
+            await send_logo(message, "❌ Произошла ошибка при обработке файла. Пожалуйста, напишите в поддержку.",
+                            reply_markup=error_kb("transcription_error"), image="error")
 
-    except Exception as exc:
-        logger.exception("[user_id=%s] Непредвиденная ошибка при обработке файла: %s", user_id, exc)
-        await send_logo(message, "❌ Произошла ошибка при обработке файла. Пожалуйста, напишите в поддержку.",
-                        reply_markup=error_kb("transcription_error"), image="error")
+        except Exception as exc:
+            logger.exception("[user_id=%s] Непредвиденная ошибка при обработке файла: %s", user_id, exc)
+            await send_logo(message, "❌ Произошла ошибка при обработке файла. Пожалуйста, напишите в поддержку.",
+                            reply_markup=error_kb("transcription_error"), image="error")
 
-    finally:
-        _cleanup_tmp(tmp_dir)
+        finally:
+            _cleanup_tmp(tmp_dir)
 
 
 @router.message(RenameRecord.waiting_for_title, F.text)
@@ -450,42 +469,49 @@ async def _send_welcome(message: Message) -> None:
 
 async def _handle_url(message: Message, url: str) -> None:
     user_id = message.from_user.id if message.from_user else 0
-    if get_user_role(user_id) != "ADMIN" and not has_sufficient_balance(user_id):
-        await send_logo(
-            message,
-            "⚠️ У тебя закончились минуты транскрибации.\n"
-            "Пополни баланс или пригласи друга!",
-            reply_markup=error_kb("limit_exceeded"),
-            image="time_limit",
-        )
+
+    lock = _get_user_lock(user_id)
+    if lock.locked():
+        await message.answer(BUSY_TEXT)
         return
 
-    status_msg = await message.answer("⏳ Скачиваю аудио по ссылке…")
-    tmp_dir = tempfile.mkdtemp(prefix="transcriber_url_")
+    async with lock:
+        if get_user_role(user_id) != "ADMIN" and not has_sufficient_balance(user_id):
+            await send_logo(
+                message,
+                "⚠️ У тебя закончились минуты транскрибации.\n"
+                "Пополни баланс или пригласи друга!",
+                reply_markup=error_kb("limit_exceeded"),
+                image="time_limit",
+            )
+            return
 
-    try:
-        audio_path = await asyncio.to_thread(download_audio_from_url, url, tmp_dir)
-        logger.info("Аудио скачано из URL: %s → %s", url, audio_path)
+        status_msg = await message.answer("⏳ Скачиваю аудио по ссылке…")
+        tmp_dir = tempfile.mkdtemp(prefix="transcriber_url_")
 
-        await _process_audio(message, audio_path, tmp_dir, status_msg)
+        try:
+            audio_path = await asyncio.to_thread(download_audio_from_url, url, tmp_dir)
+            logger.info("Аудио скачано из URL: %s → %s", url, audio_path)
 
-    except RuntimeError as exc:
-        logger.error("[user_id=%s] Ошибка скачивания по ссылке %s: %s", user_id, url, exc)
-        await send_logo(message, "❌ Не удалось обработать ссылку. Пожалуйста, напишите в поддержку.",
-                        reply_markup=error_kb("unavailable_link"), image="error")
+            await _process_audio(message, audio_path, tmp_dir, status_msg)
 
-    except TranscriptionError as exc:
-        logger.error("[user_id=%s] Ошибка транскрибации по ссылке %s: %s", user_id, url, exc)
-        await send_logo(message, "❌ Произошла ошибка при обработке ссылки. Пожалуйста, напишите в поддержку.",
-                        reply_markup=error_kb("transcription_error"), image="error")
+        except RuntimeError as exc:
+            logger.error("[user_id=%s] Ошибка скачивания по ссылке %s: %s", user_id, url, exc)
+            await send_logo(message, "❌ Не удалось обработать ссылку. Пожалуйста, напишите в поддержку.",
+                            reply_markup=error_kb("unavailable_link"), image="error")
 
-    except Exception as exc:
-        logger.exception("[user_id=%s] Непредвиденная ошибка при обработке ссылки %s: %s", user_id, url, exc)
-        await send_logo(message, "❌ Произошла ошибка при обработке ссылки. Пожалуйста, напишите в поддержку.",
-                        reply_markup=error_kb("transcription_error"), image="error")
+        except TranscriptionError as exc:
+            logger.error("[user_id=%s] Ошибка транскрибации по ссылке %s: %s", user_id, url, exc)
+            await send_logo(message, "❌ Произошла ошибка при обработке ссылки. Пожалуйста, напишите в поддержку.",
+                            reply_markup=error_kb("transcription_error"), image="error")
 
-    finally:
-        _cleanup_tmp(tmp_dir)
+        except Exception as exc:
+            logger.exception("[user_id=%s] Непредвиденная ошибка при обработке ссылки %s: %s", user_id, url, exc)
+            await send_logo(message, "❌ Произошла ошибка при обработке ссылки. Пожалуйста, напишите в поддержку.",
+                            reply_markup=error_kb("transcription_error"), image="error")
+
+        finally:
+            _cleanup_tmp(tmp_dir)
 
 
 async def _process_audio(
