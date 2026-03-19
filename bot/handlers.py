@@ -682,15 +682,23 @@ async def _handle_sub_pay(message: Message) -> None:
 
 
 async def _handle_sub_topup(message: Message, bot: Bot, user_id: int) -> None:
+    from bot.database import get_subscription
     phone = get_user_phone(user_id)
     if not phone:
-        # Legacy-поток: если телефона нет, направляем в новые тарифы
         await message.answer("⚠️ Для оплаты необходимо указать номер телефона. Используй /plan для выбора тарифа.")
         return
 
+    plan = get_subscription("basic")
+    if not plan:
+        await message.answer("⚠️ Тариф не найден.")
+        return
+
+    plan_price = plan["price"]
+    plan_name = plan["name"]
+
     await message.answer("⏳ Создаю платёж…")
 
-    result = await asyncio.to_thread(create_payment, 1000, "Тариф «Basic»", phone)
+    result = await asyncio.to_thread(create_payment, plan_price, f"Тариф «{plan_name}»", phone)
     if not result:
         await message.answer("❌ Не удалось создать платёж. Попробуйте позже.")
         return
@@ -698,7 +706,7 @@ async def _handle_sub_topup(message: Message, bot: Bot, user_id: int) -> None:
     payment_id, payment_url = result
 
     try:
-        save_payment(payment_id, user_id, 1000, subscription_code="basic")
+        save_payment(payment_id, user_id, plan_price, subscription_code="basic")
     except Exception as exc:
         logger.error("Ошибка сохранения платежа %s: %s", payment_id, exc)
 

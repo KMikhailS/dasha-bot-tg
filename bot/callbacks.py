@@ -14,13 +14,13 @@ from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemo
 from bot.states import AskQuestion, RenameRecord, WaitingPhone
 
 from bot.database import (
-    PLANS,
     add_referral,
     delete_record,
     get_record,
     get_records_count,
     get_referral_count,
     get_referral_minutes_earned,
+    get_subscription,
     get_user_balance,
     get_user_phone,
     get_user_plan_info,
@@ -569,13 +569,15 @@ async def _handle_plan(callback: CallbackQuery, payload: str, state: FSMContext 
 
     if len(parts) >= 3 and parts[1] == "buy":
         plan_code = parts[2]
-        plan = PLANS.get(plan_code)
+        plan = get_subscription(plan_code)
         if not plan:
             await edit_or_send_logo(callback.message, "⚠️ Тариф не найден.",
                                     reply_markup=back_to_menu_kb())
             return
 
-        plan_name, plan_minutes, plan_price = plan
+        plan_name = plan["name"]
+        plan_minutes = plan["amount"]
+        plan_price = plan["price"]
         if plan_price <= 0:
             await edit_or_send_logo(callback.message, "🌿 Бесплатный тариф уже активен!",
                                     reply_markup=back_to_menu_kb())
@@ -607,7 +609,7 @@ async def _handle_plan(callback: CallbackQuery, payload: str, state: FSMContext 
 
     if len(parts) >= 3 and parts[1] == "pay":
         plan_code = parts[2]
-        plan = PLANS.get(plan_code)
+        plan = get_subscription(plan_code)
         if not plan:
             await edit_or_send_logo(callback.message, "⚠️ Тариф не найден.",
                                     reply_markup=back_to_menu_kb())
@@ -641,12 +643,13 @@ async def _create_and_send_payment(
     phone: str,
 ) -> None:
     """Создать платёж в T-Bank и отправить ссылку на оплату."""
-    plan = PLANS.get(plan_code)
+    plan = get_subscription(plan_code)
     if not plan:
         await message.answer("⚠️ Тариф не найден.")
         return
 
-    plan_name, _, plan_price = plan
+    plan_name = plan["name"]
+    plan_price = plan["price"]
 
     await message.answer("⏳ Создаю платёж…")
 
@@ -689,8 +692,8 @@ def _poll_plan_payment(
     plan_code: str,
 ) -> None:
     """Поллинг статуса платежа каждые 5 сек, до 10 минут."""
-    plan = PLANS.get(plan_code)
-    plan_name = plan[0] if plan else plan_code
+    plan = get_subscription(plan_code)
+    plan_name = plan["name"] if plan else plan_code
     deadline = time.time() + 600
 
     while time.time() < deadline:

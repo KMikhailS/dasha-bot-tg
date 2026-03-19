@@ -505,6 +505,29 @@ def get_user_plan_info(user_id: int) -> dict:
     return {"code": "free", "name": "Бесплатный", "plan_minutes": 60, "price": 0, "balance": 0}
 
 
+def get_subscription(code: str) -> dict | None:
+    """Получить тариф из таблицы subscriptions по коду.
+
+    Returns:
+        {"code", "name", "amount" (минуты), "price" (рубли)} или None.
+    """
+    conn = _get_conn()
+    row = conn.execute(
+        "SELECT code, name, amount, price FROM subscriptions WHERE code = ? AND active = 1",
+        (code,),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def get_all_subscriptions() -> list[dict]:
+    """Получить все активные платные тарифы из subscriptions, отсортированные по цене."""
+    conn = _get_conn()
+    rows = conn.execute(
+        "SELECT code, name, amount, price FROM subscriptions WHERE active = 1 AND price > 0 ORDER BY price"
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
 # ── Реферальная программа ─────────────────────────────────
 
 def get_user_ref_code(user_id: int) -> str:

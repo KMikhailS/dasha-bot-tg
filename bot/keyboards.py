@@ -68,16 +68,23 @@ def reports_submenu_kb(record_id: str) -> InlineKeyboardMarkup:
     ])
 
 
+_PLAN_ICONS = {"basic": "💜", "standard": "⭐", "pro": "💎"}
+
+
 def plans_kb() -> InlineKeyboardMarkup:
-    plans = [
-        ("basic", "💜 Basic — 100 мин / 200₽"),
-        ("standard", "⭐ Standard — 500 мин / 500₽"),
-        ("pro", "💎 Pro — 5000 мин / 4000₽"),
-    ]
+    from bot.database import get_all_subscriptions
+    plans = get_all_subscriptions()
     buttons = []
-    for code, label in plans:
+    for p in plans:
+        icon = _PLAN_ICONS.get(p["code"], "📦")
+        minutes = p["amount"]
+        if minutes == -1:
+            min_str = "безлимит"
+        else:
+            min_str = f"{minutes} мин"
+        label = f"{icon} {p['name']} — {min_str} / {p['price']}₽"
         buttons.append([InlineKeyboardButton(
-            text=label, callback_data=f"plan:buy:{code}"
+            text=label, callback_data=f"plan:buy:{p['code']}"
         )])
     buttons.append([InlineKeyboardButton(text="🔙 Главное меню", callback_data="menu:main")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
