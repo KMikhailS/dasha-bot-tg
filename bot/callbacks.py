@@ -9,7 +9,9 @@ from aiogram import Bot
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
 
-from bot.states import AskQuestion, RenameRecord
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
+
+from bot.states import AskQuestion, RenameRecord, WaitingPhone
 
 from bot.database import (
     PLANS,
@@ -20,6 +22,7 @@ from bot.database import (
     get_referral_count,
     get_referral_minutes_earned,
     get_user_balance,
+    get_user_phone,
     get_user_plan_info,
     get_user_records,
     get_user_ref_code,
@@ -82,7 +85,7 @@ HELP_FAQ = {
     "payment": (
         "💳 <b>Как оплатить?</b>\n\n"
         "Нажми «⭐ Тарифы» в главном меню и выбери подходящий план.\n"
-        "Оплата через ЮKassa (карты, СБП)."
+        "Оплата через T-Bank (карты, СБП, T-Pay)."
     ),
     "support": (
         "👤 <b>Поддержка</b>\n\n"
@@ -176,7 +179,7 @@ async def dispatch_callback(callback: CallbackQuery, state: FSMContext | None = 
         return True
 
     if payload.startswith("plan:"):
-        await _handle_plan(callback, payload)
+        await _handle_plan(callback, payload, state)
         return True
 
     if payload.startswith("referral:"):
@@ -542,7 +545,7 @@ async def _handle_settings(callback: CallbackQuery, payload: str) -> None:
 
 # ── Тарифы и оплата ──────────────────────────────────────
 
-async def _handle_plan(callback: CallbackQuery, payload: str) -> None:
+async def _handle_plan(callback: CallbackQuery, payload: str, state: FSMContext | None = None) -> None:
     """Обработка callback'ов plan:current:{code} и plan:buy:{code}."""
     parts = payload.split(":")
     user_id = callback.from_user.id
@@ -610,38 +613,71 @@ async def _handle_plan(callback: CallbackQuery, payload: str) -> None:
                                     reply_markup=back_to_menu_kb())
             return
 
-        plan_name, _, plan_price = plan
-
-        await callback.message.answer("⏳ Создаю платёж…")
-
-        result = await asyncio.to_thread(
-            create_payment, plan_price, f"Тариф «{plan_name}» — {plan_price}₽"
-        )
-        if not result:
-            await callback.message.answer("❌ Не удалось создать платёж. Попробуй позже.")
+        phone = get_user_phone(user_id)
+        if not phone:
+            # Телефон не указан — запрашиваем перед оплатой
+            if state:
+                await state.set_state(WaitingPhone.waiting_for_phone)
+                await state.update_data(pay_plan_code=plan_code)
+            phone_kb = ReplyKeyboardMarkup(
+                keyboard=[[KeyboardButton(text="📱 Отправить номер", request_contact=True)]],
+                resize_keyboard=True,
+                one_time_keyboard=True,
+            )
+            await callback.message.answer(
+                "📱 Для формирования чека укажи номер телефона.\n\n"
+                "Нажми кнопку ниже или отправь номер в формате +7XXXXXXXXXX:",
+                reply_markup=phone_kb,
+            )
             return
 
-        payment_id, payment_url = result
+        await _create_and_send_payment(callback.message, user_id, plan_code, phone)
 
-        try:
-            save_payment(payment_id, user_id, plan_price, subscription_code=plan_code)
-        except Exception as exc:
-            logger.error("Ошибка сохранения платежа %s: %s", payment_id, exc)
 
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="💳 Оплатить", url=payment_url)],
-            [InlineKeyboardButton(text="🔙 Главное меню", callback_data="menu:main")],
-        ])
-        await callback.message.answer("Нажми кнопку ниже для оплаты:", reply_markup=kb)
+async def _create_and_send_payment(
+    message,
+    user_id: int,
+    plan_code: str,
+    phone: str,
+) -> None:
+    """Создать платёж в T-Bank и отправить ссылку на оплату."""
+    plan = PLANS.get(plan_code)
+    if not plan:
+        await message.answer("⚠️ Тариф не найден.")
+        return
 
-        # Запускаем поллинг статуса платежа
-        bot: Bot = callback.message.bot
-        loop = asyncio.get_running_loop()
-        threading.Thread(
-            target=_poll_plan_payment,
-            args=(bot, loop, callback.message.chat.id, user_id, payment_id, plan_code),
-            daemon=True,
-        ).start()
+    plan_name, _, plan_price = plan
+
+    await message.answer("⏳ Создаю платёж…")
+
+    result = await asyncio.to_thread(
+        create_payment, plan_price, f"Тариф «{plan_name}»", phone
+    )
+    if not result:
+        await message.answer("❌ Не удалось создать платёж. Попробуй позже.")
+        return
+
+    payment_id, payment_url = result
+
+    try:
+        save_payment(payment_id, user_id, plan_price, subscription_code=plan_code)
+    except Exception as exc:
+        logger.error("Ошибка сохранения платежа %s: %s", payment_id, exc)
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💳 Оплатить", url=payment_url)],
+        [InlineKeyboardButton(text="🔙 Главное меню", callback_data="menu:main")],
+    ])
+    await message.answer("Нажми кнопку ниже для оплаты:", reply_markup=kb)
+
+    # Запускаем поллинг статуса платежа
+    bot: Bot = message.bot
+    loop = asyncio.get_running_loop()
+    threading.Thread(
+        target=_poll_plan_payment,
+        args=(bot, loop, message.chat.id, user_id, payment_id, plan_code),
+        daemon=True,
+    ).start()
 
 
 def _poll_plan_payment(

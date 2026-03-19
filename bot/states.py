@@ -9,3 +9,7 @@ class RenameRecord(StatesGroup):
 
 class AskQuestion(StatesGroup):
     waiting_for_question = State()
+
+
+class WaitingPhone(StatesGroup):
+    waiting_for_phone = State()

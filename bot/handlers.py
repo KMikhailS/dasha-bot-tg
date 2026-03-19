@@ -17,10 +17,12 @@ from aiogram.types import (
     Message,
 )
 
-from bot.states import AskQuestion, RenameRecord
+from aiogram.types import ReplyKeyboardRemove
+
+from bot.states import AskQuestion, RenameRecord, WaitingPhone
 
 from bot.audio_splitter import extract_audio
-from bot.callbacks import dispatch_callback
+from bot.callbacks import dispatch_callback, _create_and_send_payment
 from bot.config import SUPPORTED_AUDIO_EXTENSIONS
 from bot.logo import send_logo
 from bot.database import (
@@ -31,6 +33,7 @@ from bot.database import (
     get_record,
     get_records_count,
     get_user_balance,
+    get_user_phone,
     get_user_plan_info,
     get_user_records,
     get_user_role,
@@ -40,6 +43,7 @@ from bot.database import (
     mark_payment_paid,
     rename_record,
     save_payment,
+    save_user_phone,
     save_record,
     set_user_onboarded,
 )
@@ -352,6 +356,64 @@ async def on_rename_title(message: Message, state: FSMContext) -> None:
         await send_logo(message, "✅ Запись переименована.", reply_markup=back_to_menu_kb())
 
 
+import re
+
+
+def _normalize_phone(raw: str) -> str | None:
+    """Нормализовать номер телефона в формат +7XXXXXXXXXX.
+
+    Принимает: +79001234567, 89001234567, 79001234567, 9001234567.
+    Возвращает None если формат не распознан.
+    """
+    digits = re.sub(r"\D", "", raw)
+    if len(digits) == 11 and digits[0] in ("7", "8"):
+        return "+7" + digits[1:]
+    if len(digits) == 10:
+        return "+7" + digits
+    return None
+
+
+@router.message(WaitingPhone.waiting_for_phone, F.contact)
+async def on_phone_contact(message: Message, state: FSMContext) -> None:
+    """Получение телефона через кнопку «Отправить номер»."""
+    phone = _normalize_phone(message.contact.phone_number)
+    if not phone:
+        await message.answer("⚠️ Не удалось распознать номер. Отправь в формате +7XXXXXXXXXX:")
+        return
+
+    await _process_phone_and_pay(message, state, phone)
+
+
+@router.message(WaitingPhone.waiting_for_phone, F.text)
+async def on_phone_text(message: Message, state: FSMContext) -> None:
+    """Получение телефона текстовым сообщением."""
+    phone = _normalize_phone(message.text or "")
+    if not phone:
+        await message.answer("⚠️ Неверный формат. Отправь номер в формате +7XXXXXXXXXX:")
+        return
+
+    await _process_phone_and_pay(message, state, phone)
+
+
+async def _process_phone_and_pay(message: Message, state: FSMContext, phone: str) -> None:
+    """Сохранить телефон и создать платёж."""
+    data = await state.get_data()
+    plan_code = data.get("pay_plan_code")
+    await state.clear()
+
+    user_id = message.from_user.id if message.from_user else 0
+    save_user_phone(user_id, phone)
+
+    # Убираем reply-клавиатуру с кнопкой «Отправить номер»
+    await message.answer("✅ Номер сохранён!", reply_markup=ReplyKeyboardRemove())
+
+    if plan_code:
+        await _create_and_send_payment(message, user_id, plan_code, phone)
+    else:
+        await message.answer("⚠️ Не удалось определить тариф. Выбери тариф заново.",
+                             reply_markup=back_to_menu_kb())
+
+
 @router.message(AskQuestion.waiting_for_question, F.text)
 async def on_question(message: Message, state: FSMContext) -> None:
     url = extract_media_url(message.text or "")
@@ -620,9 +682,15 @@ async def _handle_sub_pay(message: Message) -> None:
 
 
 async def _handle_sub_topup(message: Message, bot: Bot, user_id: int) -> None:
+    phone = get_user_phone(user_id)
+    if not phone:
+        # Legacy-поток: если телефона нет, направляем в новые тарифы
+        await message.answer("⚠️ Для оплаты необходимо указать номер телефона. Используй /plan для выбора тарифа.")
+        return
+
     await message.answer("⏳ Создаю платёж…")
 
-    result = await asyncio.to_thread(create_payment, 1000, "Пополнение баланса — тариф Basic")
+    result = await asyncio.to_thread(create_payment, 1000, "Тариф «Basic»", phone)
     if not result:
         await message.answer("❌ Не удалось создать платёж. Попробуйте позже.")
         return

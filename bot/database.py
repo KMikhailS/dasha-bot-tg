@@ -317,6 +317,27 @@ def get_user_balance(user_id: int) -> int:
     return 0
 
 
+# ── Телефон пользователя ──────────────────────────────────
+
+def get_user_phone(user_id: int) -> str | None:
+    """Получить номер телефона пользователя."""
+    conn = _get_conn()
+    row = conn.execute("SELECT phone FROM user_info WHERE id = ?", (user_id,)).fetchone()
+    return row["phone"] if row and row["phone"] else None
+
+
+def save_user_phone(user_id: int, phone: str) -> None:
+    """Сохранить номер телефона пользователя."""
+    conn = _get_conn()
+    now = datetime.now(timezone.utc).isoformat()
+    conn.execute(
+        "UPDATE user_info SET phone = ?, changestamp = ? WHERE id = ?",
+        (phone, now, user_id),
+    )
+    conn.commit()
+    logger.info("Сохранён телефон для пользователя %d", user_id)
+
+
 # ── Роль пользователя ─────────────────────────────────────
 
 def get_user_role(user_id: int) -> str:

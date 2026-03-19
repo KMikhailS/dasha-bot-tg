@@ -8,8 +8,9 @@ load_dotenv()
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
-YOKASSA_SHOP_ID = os.getenv("YOKASSA_SHOP_ID", "")
-YOKASSA_SECRET_KEY = os.getenv("YOKASSA_SECRET_KEY", "")
+TBANK_TERMINAL_KEY = os.getenv("TBANK_TERMINAL_KEY", "")
+TBANK_PASSWORD = os.getenv("TBANK_PASSWORD", "")
+TBANK_TAXATION = os.getenv("TBANK_TAXATION", "usn_income")  # система налогообложения
 
 # Whisper
 WHISPER_MODEL = "whisper-1"
