@@ -637,7 +637,18 @@ async def _process_audio(
 
     # Сохраняем запись в БД + текст в S3
     record_id = uuid.uuid4().hex[:16]
+
+    # Авто-название по первым словам транскрибации для голосовых сообщений
     title = audio_stem[:100] or "Запись"
+    if audio_stem.startswith("voice_") or audio_stem.startswith("videonote_"):
+        settings = get_user_settings(user_id)
+        if settings.get("auto_title", 1):
+            words = text.strip().split()
+            auto = " ".join(words[:6])
+            if len(auto) > 100:
+                auto = auto[:97] + "…"
+            if auto:
+                title = auto
     try:
         s3_key = await asyncio.to_thread(upload_text, user_id, record_id, text, audio_stem)
         save_record(
