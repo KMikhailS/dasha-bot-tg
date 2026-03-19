@@ -744,6 +744,7 @@ def _poll_payment(
                     bot.send_message(
                         chat_id,
                         f"✅ Оплата прошла успешно!\nТвой баланс: {bal_str}",
+                        reply_markup=main_menu_kb(),
                     ),
                     loop,
                 )

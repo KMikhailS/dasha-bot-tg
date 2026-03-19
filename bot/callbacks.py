@@ -715,6 +715,7 @@ def _poll_plan_payment(
                         f"✅ Оплата прошла успешно!\n"
                         f"Тариф «{plan_name}» активирован.\n"
                         f"Твой баланс: {bal_str}",
+                        reply_markup=main_menu_kb(),
                     ),
                     loop,
                 )
