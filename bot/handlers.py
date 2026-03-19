@@ -744,7 +744,7 @@ def _poll_payment(
                     bot.send_message(
                         chat_id,
                         f"✅ Оплата прошла успешно!\nТвой баланс: {bal_str}",
-                        reply_markup=main_menu_kb(),
+                        reply_markup=back_to_menu_kb(),
                     ),
                     loop,
                 )
@@ -754,7 +754,11 @@ def _poll_payment(
 
         if status == "canceled":
             asyncio.run_coroutine_threadsafe(
-                bot.send_message(chat_id, "❌ Платёж отменён."),
+                bot.send_message(
+                    chat_id,
+                    "❌ Платёж отменён.",
+                    reply_markup=back_to_menu_kb(),
+                ),
                 loop,
             )
             return

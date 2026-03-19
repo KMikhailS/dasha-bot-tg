@@ -124,7 +124,15 @@ def get_payment_status(payment_id: str) -> str | None:
         resp.raise_for_status()
         data = resp.json()
         raw_status = data.get("Status", "")
-        logger.info("Статус платежа %s: %s", payment_id, raw_status)
+        error_code = data.get("ErrorCode", "0")
+        error_message = data.get("Message", "")
+        if error_code != "0" or raw_status in ("REJECTED", "CANCELED", "DEADLINE_EXPIRED", "AUTH_FAIL"):
+            logger.warning(
+                "Платёж %s: статус=%s, ErrorCode=%s, Message=%s",
+                payment_id, raw_status, error_code, error_message,
+            )
+        else:
+            logger.info("Статус платежа %s: %s", payment_id, raw_status)
 
         # Маппинг статусов T-Bank → внутренние статусы
         if raw_status == "CONFIRMED":

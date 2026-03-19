@@ -715,7 +715,7 @@ def _poll_plan_payment(
                         f"✅ Оплата прошла успешно!\n"
                         f"Тариф «{plan_name}» активирован.\n"
                         f"Твой баланс: {bal_str}",
-                        reply_markup=main_menu_kb(),
+                        reply_markup=back_to_menu_kb(),
                     ),
                     loop,
                 )
@@ -725,7 +725,11 @@ def _poll_plan_payment(
 
         if status == "canceled":
             asyncio.run_coroutine_threadsafe(
-                bot.send_message(chat_id, "❌ Платёж отменён."),
+                bot.send_message(
+                    chat_id,
+                    "❌ Платёж отменён.",
+                    reply_markup=back_to_menu_kb(),
+                ),
                 loop,
             )
             return
