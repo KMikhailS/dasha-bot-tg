@@ -415,17 +415,19 @@ async def _handle_record(callback: CallbackQuery, payload: str, state: FSMContex
 
     elif action == "view":
         text = await _load_transcription(record) or "Текст не найден."
-        # Обрезаем текст, чтобы влез в expandable blockquote (лимит 4096 символов)
-        max_text_len = 4096 - len("<blockquote expandable></blockquote>")
-        if len(text) > max_text_len:
-            text = text[:max_text_len - 20] + "…\n\n(текст обрезан)"
-        expandable = f"<blockquote expandable>{text}</blockquote>"
+        max_len = 3000
+        if len(text) > max_len:
+            text = text[:max_len] + "\n\n✂️ <i>Текст обрезан. Скачай полную версию файлом:</i>"
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="📥 Скачать полный текст (.txt)", callback_data=f"record:download:{record_id}")],
+                [InlineKeyboardButton(text="🔙 Назад", callback_data=f"record:open:{record_id}")],
+            ])
+        else:
+            kb = record_card_kb(record_id)
         try:
-            await callback.message.answer(expandable, parse_mode="HTML",
-                                          reply_markup=record_card_kb(record_id))
+            await callback.message.answer(text, parse_mode="HTML", reply_markup=kb)
         except Exception:
-            await callback.message.answer(text, parse_mode=None,
-                                          reply_markup=record_card_kb(record_id))
+            await callback.message.answer(text, parse_mode=None, reply_markup=kb)
 
     elif action == "actions":
         await edit_or_send_logo(callback.message, "✅ Что сделать с текстом?",
