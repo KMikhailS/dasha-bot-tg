@@ -1,4 +1,5 @@
 import logging
+import secrets
 import sqlite3
 import threading
 import uuid
@@ -111,6 +112,27 @@ def init_db() -> None:
             created_at      TEXT    NOT NULL,
             FOREIGN KEY (referrer_id) REFERENCES user_info(id),
             FOREIGN KEY (referred_id) REFERENCES user_info(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS short_links (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            code        TEXT    UNIQUE NOT NULL,
+            utm_source  TEXT,
+            utm_medium  TEXT,
+            utm_campaign TEXT,
+            utm_content TEXT,
+            utm_term    TEXT,
+            erid        TEXT,
+            created_at  TEXT    DEFAULT (datetime('now')),
+            created_by  INTEGER
+        );
+
+        CREATE TABLE IF NOT EXISTS short_link_visits (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            short_link_id  INTEGER NOT NULL,
+            user_id        INTEGER NOT NULL,
+            visited_at     TEXT    DEFAULT (datetime('now')),
+            FOREIGN KEY (short_link_id) REFERENCES short_links(id)
         );
     """)
 
@@ -609,3 +631,67 @@ def get_referral_minutes_earned(user_id: int) -> int:
         (user_id,),
     ).fetchone()
     return row["total"] if row else 0
+
+
+# ── Короткие ссылки ──────────────────────────────────────
+
+def create_short_link(
+    utm_source: str | None = None,
+    utm_medium: str | None = None,
+    utm_campaign: str | None = None,
+    utm_content: str | None = None,
+    utm_term: str | None = None,
+    erid: str | None = None,
+    created_by: int | None = None,
+) -> str:
+    """Создать короткую ссылку с UTM-параметрами. Возвращает уникальный code."""
+    conn = _get_conn()
+    for _ in range(10):
+        code = secrets.token_urlsafe(6)[:8]
+        existing = conn.execute("SELECT id FROM short_links WHERE code = ?", (code,)).fetchone()
+        if not existing:
+            break
+    conn.execute(
+        """
+        INSERT INTO short_links (code, utm_source, utm_medium, utm_campaign, utm_content, utm_term, erid, created_by)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (code, utm_source, utm_medium, utm_campaign, utm_content, utm_term, erid, created_by),
+    )
+    conn.commit()
+    logger.info("Создана короткая ссылка: %s", code)
+    return code
+
+
+def get_short_link(code: str) -> dict | None:
+    """Получить данные короткой ссылки по коду."""
+    conn = _get_conn()
+    row = conn.execute("SELECT * FROM short_links WHERE code = ?", (code,)).fetchone()
+    return dict(row) if row else None
+
+
+def track_short_link_visit(code: str, user_id: int) -> None:
+    """Записать визит пользователя по короткой ссылке."""
+    conn = _get_conn()
+    link = conn.execute("SELECT id FROM short_links WHERE code = ?", (code,)).fetchone()
+    if not link:
+        return
+    conn.execute(
+        "INSERT INTO short_link_visits (short_link_id, user_id) VALUES (?, ?)",
+        (link["id"], user_id),
+    )
+    conn.commit()
+
+
+def get_short_link_stats(code: str) -> dict:
+    """Статистика переходов по короткой ссылке."""
+    conn = _get_conn()
+    link = conn.execute("SELECT id FROM short_links WHERE code = ?", (code,)).fetchone()
+    if not link:
+        return {"visits": 0, "unique_users": 0}
+    row = conn.execute(
+        "SELECT COUNT(*) as visits, COUNT(DISTINCT user_id) as unique_users "
+        "FROM short_link_visits WHERE short_link_id = ?",
+        (link["id"],),
+    ).fetchone()
+    return {"visits": row["visits"], "unique_users": row["unique_users"]}

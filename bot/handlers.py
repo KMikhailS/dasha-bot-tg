@@ -27,11 +27,13 @@ from bot.config import SUPPORTED_AUDIO_EXTENSIONS
 from bot.logo import send_logo
 from bot.database import (
     add_referral,
+    create_short_link,
     deduct_balance,
     find_user_by_ref_code,
     get_or_create_user,
     get_record,
     get_records_count,
+    get_short_link,
     get_user_balance,
     get_user_phone,
     get_user_plan_info,
@@ -46,6 +48,7 @@ from bot.database import (
     save_user_phone,
     save_record,
     set_user_onboarded,
+    track_short_link_visit,
 )
 from bot.keyboards import (
     ONBOARDING_MESSAGES,
@@ -110,17 +113,26 @@ async def cmd_start(message: Message) -> None:
     _register_user(message.from_user)
     user_id = message.from_user.id if message.from_user else None
 
-    # Обработка реферальной ссылки: /start ref_{code}
+    # Обработка deeplink-параметра: /start <payload>
     if user_id and message.text:
         args = message.text.split(maxsplit=1)
-        if len(args) > 1 and args[1].startswith("ref_"):
-            ref_code = args[1][4:]
-            referrer_id = find_user_by_ref_code(ref_code)
-            if referrer_id and referrer_id != user_id:
-                if add_referral(referrer_id, user_id):
-                    await message.answer(
-                        "🎉 Добро пожаловать! Твой друг получил +30 минут за приглашение."
-                    )
+        if len(args) > 1:
+            payload = args[1]
+            if payload.startswith("ref_"):
+                # Реферальная ссылка
+                ref_code = payload[4:]
+                referrer_id = find_user_by_ref_code(ref_code)
+                if referrer_id and referrer_id != user_id:
+                    if add_referral(referrer_id, user_id):
+                        await message.answer(
+                            "🎉 Добро пожаловать! Твой друг получил +30 минут за приглашение."
+                        )
+            else:
+                # Короткая ссылка с UTM-параметрами
+                link = get_short_link(payload)
+                if link:
+                    track_short_link_visit(payload, user_id)
+                    logger.info("Переход по короткой ссылке %s от пользователя %d", payload, user_id)
 
     if user_id and not is_user_onboarded(user_id):
         await send_logo(message, ONBOARDING_MESSAGES[1], reply_markup=onboarding_kb(1))
@@ -245,6 +257,65 @@ async def cmd_settings(message: Message) -> None:
     user_id = message.from_user.id if message.from_user else 0
     s = get_user_settings(user_id)
     await send_logo(message, "⚙️ Настройки:", reply_markup=settings_kb(s))
+
+
+@router.message(Command("get_short_link"))
+async def cmd_get_short_link(message: Message) -> None:
+    """Создать короткую ссылку с UTM-параметрами (только для админов)."""
+    user_id = message.from_user.id if message.from_user else 0
+    if get_user_role(user_id) != "ADMIN":
+        return
+
+    import json
+
+    raw = (message.text or "").split(maxsplit=1)
+    if len(raw) < 2:
+        await message.answer(
+            "⚠️ Укажи JSON после команды. Пример:\n\n"
+            '<code>/get_short_link {"utm_source": "telegain", "utm_medium": "cpp", '
+            '"utm_campaign": "kampaniya", "erid": "2W5zFJ4UyYL"}</code>',
+            parse_mode="HTML",
+        )
+        return
+
+    try:
+        data = json.loads(raw[1])
+    except json.JSONDecodeError:
+        await message.answer("❌ Невалидный JSON. Проверь формат и попробуй снова.")
+        return
+
+    if not isinstance(data, dict):
+        await message.answer("❌ JSON должен быть объектом (словарём).")
+        return
+
+    code = create_short_link(
+        utm_source=data.get("utm_source"),
+        utm_medium=data.get("utm_medium"),
+        utm_campaign=data.get("utm_campaign"),
+        utm_content=data.get("utm_content"),
+        utm_term=data.get("utm_term"),
+        erid=data.get("erid"),
+        created_by=user_id,
+    )
+
+    bot_info = await message.bot.get_me()
+    bot_username = bot_info.username or "dasha_write_bot"
+    link = f"https://t.me/{bot_username}?start={code}"
+
+    parts = [f"✅ Короткая ссылка создана:\n<code>{link}</code>\n"]
+    utm_fields = [
+        ("source", data.get("utm_source")),
+        ("medium", data.get("utm_medium")),
+        ("campaign", data.get("utm_campaign")),
+        ("content", data.get("utm_content")),
+        ("term", data.get("utm_term")),
+        ("erid", data.get("erid")),
+    ]
+    shown = [f"• {name}: {val}" for name, val in utm_fields if val]
+    if shown:
+        parts.append("UTM-параметры:\n" + "\n".join(shown))
+
+    await message.answer("\n".join(parts), parse_mode="HTML")
 
 
 @router.message(F.audio | F.voice | F.video_note | F.video | F.document)
