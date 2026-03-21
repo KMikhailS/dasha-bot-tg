@@ -695,3 +695,25 @@ def get_short_link_stats(code: str) -> dict:
         (link["id"],),
     ).fetchone()
     return {"visits": row["visits"], "unique_users": row["unique_users"]}
+
+
+def get_all_short_links_with_stats() -> list[dict]:
+    """Все короткие ссылки со статистикой переходов."""
+    conn = _get_conn()
+    rows = conn.execute(
+        """
+        SELECT sl.*,
+               COALESCE(v.visits, 0) as visits,
+               COALESCE(v.unique_users, 0) as unique_users
+        FROM short_links sl
+        LEFT JOIN (
+            SELECT short_link_id,
+                   COUNT(*) as visits,
+                   COUNT(DISTINCT user_id) as unique_users
+            FROM short_link_visits
+            GROUP BY short_link_id
+        ) v ON v.short_link_id = sl.id
+        ORDER BY sl.created_at DESC
+        """,
+    ).fetchall()
+    return [dict(r) for r in rows]

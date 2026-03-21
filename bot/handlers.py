@@ -29,6 +29,7 @@ from bot.database import (
     add_referral,
     create_short_link,
     deduct_balance,
+    get_all_short_links_with_stats,
     find_user_by_ref_code,
     get_or_create_user,
     get_record,
@@ -316,6 +317,38 @@ async def cmd_get_short_link(message: Message) -> None:
         parts.append("UTM-параметры:\n" + "\n".join(shown))
 
     await message.answer("\n".join(parts), parse_mode="HTML")
+
+
+@router.message(Command("get_short_link_stats"))
+async def cmd_get_short_link_stats(message: Message) -> None:
+    """Статистика по всем коротким ссылкам (только для админов)."""
+    user_id = message.from_user.id if message.from_user else 0
+    if get_user_role(user_id) != "ADMIN":
+        return
+
+    links = get_all_short_links_with_stats()
+    if not links:
+        await message.answer("Нет созданных коротких ссылок.")
+        return
+
+    bot_info = await message.bot.get_me()
+    bot_username = bot_info.username or "dasha_write_bot"
+
+    lines = ["📊 <b>Статистика коротких ссылок</b>\n"]
+    for link in links:
+        url = f"https://t.me/{bot_username}?start={link['code']}"
+        label = link.get("utm_campaign") or link.get("utm_source") or link["code"]
+        lines.append(
+            f"🔗 <b>{label}</b>\n"
+            f"   <code>{url}</code>\n"
+            f"   Переходов: {link['visits']} | Уникальных: {link['unique_users']}\n"
+        )
+
+    text = "\n".join(lines)
+    # Telegram лимит 4096 символов
+    if len(text) > 4096:
+        text = text[:4090] + "\n…"
+    await message.answer(text, parse_mode="HTML")
 
 
 @router.message(F.audio | F.voice | F.video_note | F.video | F.document)
