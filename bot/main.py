@@ -2,6 +2,8 @@ import asyncio
 import logging
 
 from aiogram import Bot, Dispatcher
+from aiogram.client.session.aiohttp import AiohttpSession
+from aiogram.client.telegram import TelegramAPIServer
 from aiogram.types import BotCommand
 
 from bot.config import LOCAL_BOT_API_URL, TELEGRAM_BOT_TOKEN, validate_config
@@ -18,11 +20,14 @@ async def _main() -> None:
     validate_config()
     init_db()
 
-    bot_params = {"token": TELEGRAM_BOT_TOKEN}
     if LOCAL_BOT_API_URL:
-        bot_params["base_url"] = f"{LOCAL_BOT_API_URL}/bot"
+        session = AiohttpSession(
+            api=TelegramAPIServer.from_base(LOCAL_BOT_API_URL)
+        )
+        bot = Bot(token=TELEGRAM_BOT_TOKEN, session=session)
         logger.info("Используется Local Bot API: %s", LOCAL_BOT_API_URL)
-    bot = Bot(**bot_params)
+    else:
+        bot = Bot(token=TELEGRAM_BOT_TOKEN)
     dp = Dispatcher()
     dp.include_router(router)
 
