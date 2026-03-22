@@ -13,7 +13,7 @@ from bot.config import (
     WHISPER_AVG_LOGPROB_THRESHOLD,
     WHISPER_COMPRESSION_RATIO_THRESHOLD,
     WHISPER_LANGUAGE,
-    WHISPER_MODEL,
+    MODEL,
     WHISPER_NO_SPEECH_THRESHOLD,
     WHISPER_PROMPT_CHARS,
 )
@@ -190,8 +190,7 @@ def _transcribe_single(file_path: str, prompt: str = "") -> str:
         prompt: текст-подсказка (конец предыдущего чанка для контекста).
     """
     kwargs: dict = {
-        "model": WHISPER_MODEL,
-        # "language": WHISPER_LANGUAGE,
+        "model": MODEL,
         "temperature": 0.0,
         "response_format": "verbose_json",
         "timestamp_granularities": ["segment"],
