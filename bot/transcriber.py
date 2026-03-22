@@ -10,11 +10,7 @@ from bot.audio_splitter import cleanup_chunks, reencode_chunk, split_audio
 from bot.config import (
     OPENAI_API_KEY,
     SUPPORTED_AUDIO_EXTENSIONS,
-    WHISPER_AVG_LOGPROB_THRESHOLD,
-    WHISPER_COMPRESSION_RATIO_THRESHOLD,
-    WHISPER_LANGUAGE,
     MODEL,
-    WHISPER_NO_SPEECH_THRESHOLD,
     WHISPER_PROMPT_CHARS,
 )
 
@@ -140,50 +136,8 @@ def _clean_hallucinations(text: str) -> str:
     return cleaned
 
 
-def _is_good_segment(segment: object) -> bool:
-    """Проверить, что сегмент содержит качественную речь, а не галлюцинацию.
-
-    Отбрасываем сегмент, если:
-    - высокая вероятность отсутствия речи (шум/тишина)
-    - высокий коэффициент сжатия (повторяющийся текст)
-    - низкая уверенность модели
-
-    Принимает объект TranscriptionSegment (Pydantic BaseModel).
-    """
-    no_speech = getattr(segment, "no_speech_prob", 0.0)
-    compression = getattr(segment, "compression_ratio", 1.0)
-    avg_logprob = getattr(segment, "avg_logprob", 0.0)
-    text_preview = getattr(segment, "text", "")[:80]
-
-    if no_speech > WHISPER_NO_SPEECH_THRESHOLD:
-        logger.debug(
-            "Сегмент отброшен (no_speech_prob=%.2f): %s",
-            no_speech, text_preview,
-        )
-        return False
-
-    if compression > WHISPER_COMPRESSION_RATIO_THRESHOLD:
-        logger.debug(
-            "Сегмент отброшен (compression_ratio=%.2f): %s",
-            compression, text_preview,
-        )
-        return False
-
-    if avg_logprob < WHISPER_AVG_LOGPROB_THRESHOLD:
-        logger.debug(
-            "Сегмент отброшен (avg_logprob=%.2f): %s",
-            avg_logprob, text_preview,
-        )
-        return False
-
-    return True
-
-
 def _transcribe_single(file_path: str, prompt: str = "") -> str:
-    """Транскрибировать один файл через Whisper API.
-
-    Использует verbose_json для получения сегментов с метриками качества
-    и фильтрует «плохие» сегменты (шум, галлюцинации, низкая уверенность).
+    """Транскрибировать один файл через OpenAI Transcription API.
 
     Args:
         file_path: путь к аудиофайлу.
@@ -192,8 +146,7 @@ def _transcribe_single(file_path: str, prompt: str = "") -> str:
     kwargs: dict = {
         "model": MODEL,
         "temperature": 0.0,
-        "response_format": "verbose_json",
-        "timestamp_granularities": ["segment"],
+        "response_format": "json",
     }
     if prompt:
         kwargs["prompt"] = prompt
@@ -202,23 +155,7 @@ def _transcribe_single(file_path: str, prompt: str = "") -> str:
         kwargs["file"] = f
         response = client.audio.transcriptions.create(**kwargs)
 
-    # Фильтруем сегменты по метрикам качества
-    segments = response.segments or []
-    total_count = len(segments)
-    good_texts = [
-        seg.text.strip()
-        for seg in segments
-        if _is_good_segment(seg) and seg.text.strip()
-    ]
-    filtered_count = total_count - len(good_texts)
-
-    if filtered_count > 0:
-        logger.info(
-            "Отфильтровано %d/%d сегментов (низкое качество)",
-            filtered_count, total_count,
-        )
-
-    return " ".join(good_texts)
+    return response.text.strip()
 
 
 async def transcribe_audio(
