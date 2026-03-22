@@ -223,7 +223,9 @@ def answer_question(transcription: str, question: str) -> str | None:
         response = _client.chat.completions.create(
             model=_MODEL,
             messages=[
-                {"role": "system", "content": system_prompt},
+                {"role": "system", "content": [
+                    {"type": "text", "text": system_prompt, "cache_control": {"type": "ephemeral"}},
+                ]},
                 {"role": "user", "content": f"Транскрипция:\n{transcription[:SUMMARIZER_MAX_CHARS]}\n\nВопрос: {question}"},
             ],
         )
@@ -261,7 +263,9 @@ def generate_report(report_type: str, text: str) -> str | None:
         response = _client.chat.completions.create(
             model=_MODEL,
             messages=[
-                {"role": "system", "content": PROMPTS[report_type]},
+                {"role": "system", "content": [
+                    {"type": "text", "text": PROMPTS[report_type], "cache_control": {"type": "ephemeral"}},
+                ]},
                 {"role": "user", "content": text},
             ],
         )
