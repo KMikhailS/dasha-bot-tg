@@ -13,8 +13,8 @@ TBANK_PASSWORD = os.getenv("TBANK_PASSWORD", "")
 TBANK_TAXATION = os.getenv("TBANK_TAXATION", "usn_income")  # система налогообложения
 
 # Whisper
-# MODEL = "whisper-1"
-MODEL = "gpt-4o-mini-transcribe-2025-12-15"
+MODEL = "whisper-1"
+# MODEL = "gpt-4o-mini-transcribe-2025-12-15"
 WHISPER_LANGUAGE = "ru"  # явно указываем язык — снижает галлюцинации
 # Пороги для фильтрации «плохих» сегментов (борьба с галлюцинациями)
 WHISPER_NO_SPEECH_THRESHOLD = 0.6     # вероятность «нет речи» выше → отбрасываем
