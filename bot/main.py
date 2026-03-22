@@ -22,7 +22,7 @@ async def _main() -> None:
 
     if LOCAL_BOT_API_URL:
         session = AiohttpSession(
-            api=TelegramAPIServer.from_base(LOCAL_BOT_API_URL)
+            api=TelegramAPIServer.from_base(LOCAL_BOT_API_URL, is_local=True)
         )
         bot = Bot(token=TELEGRAM_BOT_TOKEN, session=session)
         logger.info("Используется Local Bot API: %s", LOCAL_BOT_API_URL)

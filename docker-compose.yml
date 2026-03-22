@@ -4,6 +4,7 @@ services:
     environment:
       TELEGRAM_API_ID: ${TELEGRAM_API_ID}
       TELEGRAM_API_HASH: ${TELEGRAM_API_HASH}
+      TELEGRAM_LOCAL: "true"
     volumes:
       - telegram_bot_api_data:/var/lib/telegram-bot-api
     restart: unless-stopped
@@ -18,6 +19,7 @@ services:
       - /root/dasha_data:/app/data
       - /root/dasha_images:/app/images
       - dasha_logs:/app/logs
+      - telegram_bot_api_data:/var/lib/telegram-bot-api:ro
 
 volumes:
   dasha_logs:
