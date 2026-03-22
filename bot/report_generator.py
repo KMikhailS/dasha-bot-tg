@@ -43,7 +43,8 @@ PROMPTS: dict[str, str] = {
         "2. Each point should be 1–2 sentences maximum.\n"
         "3. Prioritize decisions, conclusions, and action-relevant information.\n"
         "4. Omit filler, greetings, and off-topic digressions.\n"
-        "5. Do NOT add information that is not present in the original text."
+        "5. Do NOT add information that is not present in the original text.\n"
+        "6. Always respond in Russian."
     ),
 
     "insights": (
@@ -55,7 +56,8 @@ PROMPTS: dict[str, str] = {
         "3. For each insight provide a short title and 1–2 sentences of explanation.\n"
         "4. Order insights by importance — the most critical first.\n"
         "5. Do NOT repeat what was explicitly stated — extract what lies between the lines.\n"
-        "6. Do NOT add information that is not supported by the original text."
+        "6. Do NOT add information that is not supported by the original text.\n"
+        "7. Always respond in Russian."
     ),
 
     "action_items": (
@@ -69,7 +71,8 @@ PROMPTS: dict[str, str] = {
         "4. Use a numbered list.\n"
         "5. Order tasks by the sequence they appeared in the conversation.\n"
         "6. Do NOT invent tasks that were not discussed.\n"
-        "7. If no tasks were found, respond with a short message saying no action items were identified."
+        "7. If no tasks were found, respond with a short message saying no action items were identified.\n"
+        "8. Always respond in Russian."
     ),
 
     "questions": (
