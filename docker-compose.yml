@@ -1,7 +1,18 @@
 services:
+  telegram-bot-api:
+    image: aiogram/telegram-bot-api:latest
+    environment:
+      TELEGRAM_API_ID: ${TELEGRAM_API_ID}
+      TELEGRAM_API_HASH: ${TELEGRAM_API_HASH}
+    volumes:
+      - telegram_bot_api_data:/var/lib/telegram-bot-api
+    restart: unless-stopped
+
   bot:
     build: .
     env_file: .env
+    depends_on:
+      - telegram-bot-api
     restart: unless-stopped
     volumes:
       - /root/dasha_data:/app/data
@@ -10,3 +21,4 @@ services:
 
 volumes:
   dasha_logs:
+  telegram_bot_api_data:

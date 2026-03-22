@@ -12,6 +12,11 @@ TBANK_TERMINAL_KEY = os.getenv("TBANK_TERMINAL_KEY", "")
 TBANK_PASSWORD = os.getenv("TBANK_PASSWORD", "")
 TBANK_TAXATION = os.getenv("TBANK_TAXATION", "usn_income")  # система налогообложения
 
+# Telegram Local Bot API
+TELEGRAM_API_ID = os.getenv("TELEGRAM_API_ID", "")
+TELEGRAM_API_HASH = os.getenv("TELEGRAM_API_HASH", "")
+LOCAL_BOT_API_URL = os.getenv("LOCAL_BOT_API_URL", "")
+
 # Whisper
 # MODEL = "whisper-1"
 MODEL = "gpt-4o-mini-transcribe-2025-12-15"

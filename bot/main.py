@@ -4,7 +4,7 @@ import logging
 from aiogram import Bot, Dispatcher
 from aiogram.types import BotCommand
 
-from bot.config import TELEGRAM_BOT_TOKEN, validate_config
+from bot.config import LOCAL_BOT_API_URL, TELEGRAM_BOT_TOKEN, validate_config
 from bot.database import init_db
 from bot.handlers import router
 from bot.logging_config import setup_logging
@@ -18,7 +18,11 @@ async def _main() -> None:
     validate_config()
     init_db()
 
-    bot = Bot(token=TELEGRAM_BOT_TOKEN)
+    bot_params = {"token": TELEGRAM_BOT_TOKEN}
+    if LOCAL_BOT_API_URL:
+        bot_params["base_url"] = f"{LOCAL_BOT_API_URL}/bot"
+        logger.info("Используется Local Bot API: %s", LOCAL_BOT_API_URL)
+    bot = Bot(**bot_params)
     dp = Dispatcher()
     dp.include_router(router)
 
