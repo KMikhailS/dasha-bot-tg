@@ -13,3 +13,7 @@ class AskQuestion(StatesGroup):
 
 class WaitingPhone(StatesGroup):
     waiting_for_phone = State()
+
+
+class BroadcastMessage(StatesGroup):
+    waiting_for_message = State()

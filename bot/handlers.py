@@ -19,7 +19,7 @@ from aiogram.types import (
 
 from aiogram.types import ReplyKeyboardRemove
 
-from bot.states import AskQuestion, RenameRecord, WaitingPhone
+from bot.states import AskQuestion, BroadcastMessage, RenameRecord, WaitingPhone
 
 from bot.audio_splitter import extract_audio
 from bot.callbacks import dispatch_callback, _create_and_send_payment
@@ -30,6 +30,7 @@ from bot.database import (
     create_short_link,
     deduct_balance,
     get_all_short_links_with_stats,
+    get_all_user_ids,
     find_user_by_ref_code,
     get_or_create_user,
     get_record,
@@ -1000,6 +1001,65 @@ async def _handle_summary(message: Message, text: str, audio_stem: str) -> None:
 
     finally:
         _cleanup_tmp(tmp_dir)
+
+
+# ── Рассылка сообщения всем пользователям (только ADMIN) ──
+
+
+@router.message(Command("send_message"))
+async def cmd_send_message(message: Message, state: FSMContext) -> None:
+    """Начать рассылку сообщения пользователям (только для админов)."""
+    user_id = message.from_user.id if message.from_user else 0
+    if get_user_role(user_id) != "ADMIN":
+        return
+
+    # Парсим аргументы: /send_message 123,456 или /send_message 123
+    args = (message.text or "").split(maxsplit=1)
+    target_ids: list[int] = []
+    if len(args) > 1:
+        raw = args[1].strip()
+        for part in raw.split(","):
+            part = part.strip()
+            if part.isdigit():
+                target_ids.append(int(part))
+        if not target_ids:
+            await message.answer("❌ Не удалось распознать ID пользователей.")
+            return
+
+    await state.update_data(target_ids=target_ids)
+    await state.set_state(BroadcastMessage.waiting_for_message)
+
+    if target_ids:
+        ids_str = ", ".join(str(uid) for uid in target_ids)
+        await message.answer(f"✏️ Введите сообщение для отправки пользователям ({ids_str}):")
+    else:
+        await message.answer("✏️ Введите сообщение для рассылки всем пользователям:")
+
+
+@router.message(BroadcastMessage.waiting_for_message)
+async def process_broadcast_message(message: Message, state: FSMContext, bot: Bot) -> None:
+    """Отправить введённое сообщение пользователям."""
+    data = await state.get_data()
+    target_ids = data.get("target_ids", [])
+    await state.clear()
+
+    user_ids = target_ids if target_ids else await asyncio.to_thread(get_all_user_ids)
+    status_msg = await message.answer(f"📤 Начинаю рассылку для {len(user_ids)} пользователей...")
+
+    sent = 0
+    failed = 0
+    for uid in user_ids:
+        try:
+            await message.copy_to(chat_id=uid)
+            sent += 1
+        except Exception:
+            failed += 1
+
+    await status_msg.edit_text(
+        f"✅ Рассылка завершена!\n\n"
+        f"📨 Отправлено: {sent}\n"
+        f"❌ Не доставлено: {failed}"
+    )
 
 
 def _register_user(user: object) -> None:

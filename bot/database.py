@@ -369,6 +369,13 @@ def get_user_role(user_id: int) -> str:
     return row["role"] if row else "USER"
 
 
+def get_all_user_ids() -> list[int]:
+    """Получить список ID всех пользователей."""
+    conn = _get_conn()
+    rows = conn.execute("SELECT id FROM user_info").fetchall()
+    return [row["id"] for row in rows]
+
+
 # ── Онбординг ──────────────────────────────────────────────
 
 def is_user_onboarded(user_id: int) -> bool:
