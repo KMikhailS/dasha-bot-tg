@@ -1,4 +1,4 @@
-"""Отправка сообщений с изображениями. Кэширует file_id после первой отправки."""
+"""Отправка сообщений с изображениями и медиа. Кэширует file_id после первой отправки."""
 
 import logging
 import os
@@ -8,6 +8,7 @@ from aiogram.types import FSInputFile, Message
 logger = logging.getLogger(__name__)
 
 IMAGES_DIR = os.path.join(os.path.dirname(__file__), "..", "images")
+MEDIA_DIR = os.path.join(os.path.dirname(__file__), "..", "media")
 
 # Маппинг имён изображений на файлы
 IMAGE_FILES = {
@@ -24,6 +25,35 @@ IMAGE_FILES = {
 
 # Кэш file_id по имени изображения
 _cached_file_ids: dict[str, str] = {}
+
+# Кэш file_id для demo-аудио
+_cached_demo_file_id: str | None = None
+
+DEMO_AUDIO_PATH = os.path.join(MEDIA_DIR, "demo.m4a")
+
+
+def is_demo_available() -> bool:
+    """Проверить, доступен ли demo-файл."""
+    return os.path.exists(DEMO_AUDIO_PATH)
+
+
+async def send_demo_audio(message: Message) -> Message | None:
+    """Отправить demo-аудиофайл. Кэширует file_id после первой отправки."""
+    global _cached_demo_file_id
+
+    if _cached_demo_file_id:
+        audio = _cached_demo_file_id
+    elif os.path.exists(DEMO_AUDIO_PATH):
+        audio = FSInputFile(DEMO_AUDIO_PATH)
+    else:
+        logger.warning("Demo-файл не найден: %s", DEMO_AUDIO_PATH)
+        return None
+
+    sent = await message.answer_audio(audio=audio)
+    if _cached_demo_file_id is None and sent.audio:
+        _cached_demo_file_id = sent.audio.file_id
+        logger.info("Demo-аудио закэшировано: file_id=%s", _cached_demo_file_id)
+    return sent
 
 
 def _get_image_path(image_name: str) -> str | None:

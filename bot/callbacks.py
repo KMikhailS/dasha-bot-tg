@@ -34,7 +34,7 @@ from bot.database import (
     update_user_setting,
 )
 from bot.keyboards import (
-    ONBOARDING_MESSAGES,
+    ONBOARDING_TEXT,
     back_to_menu_kb,
     delete_confirm_kb,
     help_kb,
@@ -47,7 +47,7 @@ from bot.keyboards import (
     reports_submenu_kb,
     settings_kb,
 )
-from bot.logo import edit_or_send_logo, send_logo
+from bot.logo import edit_or_send_logo, send_demo_audio, send_logo
 from bot.payment import create_payment, get_payment_status
 from bot.config import SUMMARIZER_MAX_CHARS
 from bot.report_generator import generate_report
@@ -310,14 +310,26 @@ async def _show_main_menu(callback: CallbackQuery) -> None:
 
 
 async def _handle_onboarding(callback: CallbackQuery, payload: str) -> None:
-    parts = payload.split(":")
-    if len(parts) == 3 and parts[1] == "step":
-        step = int(parts[2])
-        text = ONBOARDING_MESSAGES.get(step, "")
-        if text:
-            await edit_or_send_logo(callback.message, text, reply_markup=onboarding_kb(step))
-        if step == 3:
-            set_user_onboarded(callback.from_user.id)
+    action = payload.split(":", 1)[1] if ":" in payload else ""
+
+    if action == "demo":
+        # Отмечаем пользователя как прошедшего онбординг
+        set_user_onboarded(callback.from_user.id)
+        # Отправляем demo-аудиофайл
+        sent = await send_demo_audio(callback.message)
+        if not sent:
+            await callback.message.answer(
+                "⚠️ Демо-файл временно недоступен. Отправь мне своё аудио!"
+            )
+            await _show_main_menu(callback)
+            return
+        # Запускаем стандартную процедуру транскрибации demo-файла
+        from bot.handlers import process_demo_audio
+        await process_demo_audio(callback.message, sent)
+
+    elif action == "start":
+        set_user_onboarded(callback.from_user.id)
+        await _show_main_menu(callback)
 
 
 async def _handle_scenario(callback: CallbackQuery, payload: str) -> None:

@@ -52,7 +52,7 @@ from bot.database import (
     track_short_link_visit,
 )
 from bot.keyboards import (
-    ONBOARDING_MESSAGES,
+    ONBOARDING_TEXT,
     back_to_menu_kb,
     error_kb,
     help_kb,
@@ -102,6 +102,47 @@ WELCOME_TEXT = (
 DOWNLOADING_TEXT = "⏳ Скачиваю аудио…"
 PREPARING_TEXT = "⏳ Подготавливаю аудио…"
 
+
+async def process_demo_audio(message: Message, sent_audio_msg: Message) -> None:
+    """Обработать demo-аудио, отправленное при онбординге.
+
+    Скачивает файл из Telegram по file_id отправленного сообщения
+    и запускает стандартную процедуру транскрибации.
+    """
+    bot: Bot = message.bot
+    user_id = message.chat.id
+
+    audio = sent_audio_msg.audio
+    if not audio:
+        return
+
+    file_id = audio.file_id
+    filename = audio.file_name or "demo.m4a"
+
+    status_msg = await message.answer(DOWNLOADING_TEXT)
+    tmp_dir = tempfile.mkdtemp(prefix="transcriber_")
+
+    try:
+        dest_path = os.path.join(tmp_dir, filename)
+        tg_file = await bot.get_file(file_id)
+        await bot.download_file(tg_file.file_path, dest_path)
+        logger.info("Скачан demo-файл: %s", dest_path)
+
+        await _process_audio(message, dest_path, tmp_dir, status_msg)
+
+    except TranscriptionError as exc:
+        logger.error("[user_id=%s] Ошибка транскрибации demo: %s", user_id, exc)
+        await send_logo(message, "❌ Произошла ошибка при обработке файла.",
+                        reply_markup=error_kb("transcription_error"), image="error")
+
+    except Exception as exc:
+        logger.exception("[user_id=%s] Ошибка обработки demo: %s", user_id, exc)
+        await send_logo(message, "❌ Произошла ошибка при обработке файла.",
+                        reply_markup=error_kb("transcription_error"), image="error")
+
+    finally:
+        _cleanup_tmp(tmp_dir)
+
 INVALID_FILE_TEXT = (
     "❌ Пожалуйста, отправьте аудиофайл, голосовое сообщение "
     "или ссылку на видео/аудио.\n"
@@ -136,7 +177,7 @@ async def cmd_start(message: Message) -> None:
                     logger.info("Переход по короткой ссылке %s от пользователя %d", payload, user_id)
 
     if user_id and not is_user_onboarded(user_id):
-        await send_logo(message, ONBOARDING_MESSAGES[1], reply_markup=onboarding_kb(1))
+        await send_logo(message, ONBOARDING_TEXT, reply_markup=onboarding_kb())
     else:
         await _send_welcome(message)
 

@@ -14,26 +14,19 @@ def main_menu_kb() -> InlineKeyboardMarkup:
     ])
 
 
-def onboarding_kb(step: int) -> InlineKeyboardMarkup:
-    if step == 1:
-        return InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="Далее ▶", callback_data="onboarding:step:2")],
-        ])
-    if step == 2:
-        return InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="Круто! Далее ▶", callback_data="onboarding:step:3")],
-        ])
-    # step 3
+def onboarding_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🚀 Начать!", callback_data="menu:main")],
+        [InlineKeyboardButton(text="✨ Покажи пример", callback_data="onboarding:demo")],
+        [InlineKeyboardButton(text="Начать пользоваться", callback_data="onboarding:start")],
     ])
 
 
-ONBOARDING_MESSAGES = {
-    1: "Привет! Я Даша 👋 Я превращаю голос в текст за секунды. Встречи, лекции, заметки — всё сохраню.",
-    2: "Могу сделать саммари, протокол, конспект, выделить задачи и ещё 10+ форматов.",
-    3: "Тебе доступно 60 бесплатных минут. Давай начнём!",
-}
+ONBOARDING_TEXT = (
+    "Привет! Я Даша 👋\n\n"
+    "Тебе доступно 60 бесплатных минут.\n\n"
+    "Отправь мне голосовое, аудио или ссылку на YouTube, Instagram, "
+    "RuTube — я расшифрую и сделаю конспект."
+)
 
 
 def back_to_menu_kb() -> InlineKeyboardMarkup:

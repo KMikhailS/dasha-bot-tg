@@ -10,6 +10,7 @@ from bot.config import LOCAL_BOT_API_URL, TELEGRAM_BOT_TOKEN, validate_config
 from bot.database import init_db
 from bot.handlers import router
 from bot.logging_config import setup_logging
+from bot.logo import is_demo_available
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +44,11 @@ async def _main() -> None:
         BotCommand(command="settings", description="Настройки"),
     ])
     logger.info("Команды бота установлены")
+
+    if is_demo_available():
+        logger.info("Demo-файл найден: /app/media/demo.m4a")
+    else:
+        logger.warning("Demo-файл НЕ найден: /app/media/demo.m4a — кнопка 'Покажи пример' не будет работать")
 
     logger.info("Бот запущен. Ожидаю сообщения...")
     await dp.start_polling(bot)
