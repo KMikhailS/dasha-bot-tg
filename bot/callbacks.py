@@ -106,6 +106,10 @@ async def dispatch_callback(callback: CallbackQuery, state: FSMContext | None = 
         await _handle_onboarding(callback, payload)
         return True
 
+    if payload.startswith("demo:"):
+        await _handle_demo_action(callback, payload)
+        return True
+
     if payload.startswith("scenario:"):
         await _handle_scenario(callback, payload)
         return True
@@ -330,6 +334,64 @@ async def _handle_onboarding(callback: CallbackQuery, payload: str) -> None:
     elif action == "start":
         set_user_onboarded(callback.from_user.id)
         await _show_main_menu(callback)
+
+
+async def _handle_demo_action(callback: CallbackQuery, payload: str) -> None:
+    """Обработка действий с demo-транскрибацией (текст из памяти, не из БД)."""
+    from bot.handlers import get_demo_context
+    from bot.keyboards import demo_post_transcription_kb
+
+    report_type = payload.split(":", 1)[1]  # summary, insights, action_items
+    user_id = callback.from_user.id
+
+    text = get_demo_context(user_id)
+    if not text:
+        await callback.message.answer(
+            "⚠️ Демо-текст больше недоступен. Отправь своё аудио!",
+            reply_markup=main_menu_kb(),
+        )
+        return
+
+    label = _REPORT_LABELS.get(report_type, report_type)
+    status_msg = await callback.message.answer(f"⏳ Генерирую: {label}…")
+
+    result = await asyncio.to_thread(generate_report, report_type, text)
+
+    if not result:
+        try:
+            await status_msg.edit_text(f"❌ Не удалось сгенерировать: {label}")
+        except Exception:
+            pass
+        return
+
+    try:
+        await status_msg.edit_text(f"✅ {label} готов!")
+    except Exception:
+        pass
+
+    # Отправляем результат
+    expandable = f"<blockquote expandable>{result}</blockquote>"
+    kb = demo_post_transcription_kb()
+    if len(expandable) < 4096:
+        try:
+            await callback.message.answer(expandable, parse_mode="HTML", reply_markup=kb)
+        except Exception:
+            await callback.message.answer(result, parse_mode=None, reply_markup=kb)
+    else:
+        import os as _os
+        import tempfile as _tempfile
+        from aiogram.types import FSInputFile
+        tmp_dir = _tempfile.mkdtemp(prefix="demo_report_")
+        filename = f"{report_type}_demo.txt"
+        path = _os.path.join(tmp_dir, filename)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(result)
+        await callback.message.answer_document(FSInputFile(path), reply_markup=kb)
+        try:
+            _os.remove(path)
+            _os.rmdir(tmp_dir)
+        except OSError:
+            pass
 
 
 async def _handle_scenario(callback: CallbackQuery, payload: str) -> None:

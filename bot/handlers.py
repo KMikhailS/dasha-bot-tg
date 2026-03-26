@@ -103,12 +103,23 @@ DOWNLOADING_TEXT = "⏳ Скачиваю аудио…"
 PREPARING_TEXT = "⏳ Подготавливаю аудио…"
 
 
-async def process_demo_audio(message: Message, sent_audio_msg: Message) -> None:
-    """Обработать demo-аудио, отправленное при онбординге.
+# Временное хранилище текста demo-транскрибации (per-user)
+_demo_context: dict[int, str] = {}
 
-    Скачивает файл из Telegram по file_id отправленного сообщения
-    и запускает стандартную процедуру транскрибации.
+
+def get_demo_context(user_id: int) -> str | None:
+    """Получить текст demo-транскрибации для пользователя."""
+    return _demo_context.get(user_id)
+
+
+async def process_demo_audio(message: Message, sent_audio_msg: Message) -> None:
+    """Обработать demo-аудио при онбординге.
+
+    Облегчённый пайплайн: транскрибирует, показывает текст в чате,
+    НЕ сохраняет в БД/S3 и НЕ списывает минуты.
     """
+    from bot.keyboards import demo_post_transcription_kb
+
     bot: Bot = message.bot
     user_id = message.chat.id
 
@@ -128,7 +139,33 @@ async def process_demo_audio(message: Message, sent_audio_msg: Message) -> None:
         await bot.download_file(tg_file.file_path, dest_path)
         logger.info("Скачан demo-файл: %s", dest_path)
 
-        await _process_audio(message, dest_path, tmp_dir, status_msg)
+        if status_msg:
+            await status_msg.edit_text(PREPARING_TEXT)
+
+        text = await transcribe_audio(dest_path)
+
+        if not text.strip():
+            await message.answer("⚠️ Не удалось распознать речь в демо-аудио.")
+            return
+
+        # Сохраняем текст в памяти для demo-кнопок
+        _demo_context[user_id] = text
+
+        if status_msg:
+            await status_msg.edit_text("✅ Транскрибация завершена!")
+
+        # Показываем текст в чате (обрезаем если длинный)
+        display_text = text if len(text) <= 4000 else text[:4000] + "\n\n✂️ <i>Текст обрезан</i>"
+        try:
+            await message.answer(display_text, parse_mode="HTML")
+        except Exception:
+            await message.answer(display_text, parse_mode=None)
+
+        # Показываем demo-кнопки действий
+        await message.answer(
+            "✅ Вот что я умею! Попробуй одно из действий:",
+            reply_markup=demo_post_transcription_kb(),
+        )
 
     except TranscriptionError as exc:
         logger.error("[user_id=%s] Ошибка транскрибации demo: %s", user_id, exc)

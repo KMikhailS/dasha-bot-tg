@@ -46,6 +46,15 @@ def post_transcription_kb(record_id: str) -> InlineKeyboardMarkup:
     ])
 
 
+def demo_post_transcription_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✨ Краткий конспект", callback_data="demo:summary")],
+        [InlineKeyboardButton(text="💡 Ключевые инсайты", callback_data="demo:insights")],
+        [InlineKeyboardButton(text="✅ Список задач", callback_data="demo:action_items")],
+        [InlineKeyboardButton(text="🔙 Главное меню", callback_data="menu:main")],
+    ])
+
+
 def reports_submenu_kb(record_id: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🧠 Mind Map", callback_data=f"report:mind_map:{record_id}")],
