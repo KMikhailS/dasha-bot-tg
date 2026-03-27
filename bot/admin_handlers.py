@@ -35,6 +35,21 @@ class IsAdmin(Filter):
 admin_router.message.filter(IsAdmin())
 
 
+@admin_router.message(Command("commands"))
+async def cmd_commands(message: Message) -> None:
+    """Список всех доступных админ-команд."""
+    text = (
+        "<b>Доступные админ-команды:</b>\n\n"
+        "/commands — список всех админ-команд\n"
+        "/get_short_link <code>{json}</code> — создать короткую ссылку с UTM-параметрами\n"
+        "/get_short_link_stats — статистика по коротким ссылкам\n"
+        "/set_admin <code>&lt;user_id&gt;</code> — установить роль ADMIN\n"
+        "/set_onboarding <code>&lt;user_id&gt; &lt;0|1&gt;</code> — сбросить/установить флаг онбординга\n"
+        "/send_message <code>[user_id,...]</code> — рассылка сообщения всем или конкретным пользователям"
+    )
+    await message.answer(text, parse_mode="HTML")
+
+
 @admin_router.message(Command("get_short_link"))
 async def cmd_get_short_link(message: Message) -> None:
     """Создать короткую ссылку с UTM-параметрами."""
