@@ -5,6 +5,7 @@ __pycache__/
 dist/
 build/
 *.egg
+.claude
 
 # Virtual environment
 venv/
@@ -29,7 +30,7 @@ tmp/
 
 
 OPEN_ROUTER_EXAMPLE.md
-CLAUDE_RULES.md
+.claude/rules/CLAUDE_RULES.md
 CLAUDE.md
 .env.example
 tasks

@@ -369,6 +369,16 @@ def get_user_role(user_id: int) -> str:
     return row["role"] if row else "USER"
 
 
+def set_user_role(user_id: int, role: str) -> bool:
+    """Установить роль пользователя. Возвращает True если пользователь найден."""
+    conn = _get_conn()
+    cursor = conn.execute(
+        "UPDATE user_info SET role = ? WHERE id = ?", (role, user_id)
+    )
+    conn.commit()
+    return cursor.rowcount > 0
+
+
 def get_all_user_ids() -> list[int]:
     """Получить список ID всех пользователей."""
     conn = _get_conn()
@@ -392,6 +402,18 @@ def set_user_onboarded(user_id: int) -> None:
         (now, user_id),
     )
     conn.commit()
+
+
+def set_user_onboarded_flag(user_id: int, value: int) -> bool:
+    """Установить is_onboarded в 0 или 1. Возвращает True если пользователь найден."""
+    conn = _get_conn()
+    now = datetime.now(timezone.utc).isoformat()
+    cursor = conn.execute(
+        "UPDATE user_info SET is_onboarded = ?, changestamp = ? WHERE id = ?",
+        (value, now, user_id),
+    )
+    conn.commit()
+    return cursor.rowcount > 0
 
 
 # ── Записи (records) ──────────────────────────────────────

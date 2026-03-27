@@ -8,6 +8,7 @@ from aiogram.types import BotCommand
 
 from bot.config import LOCAL_BOT_API_URL, TELEGRAM_BOT_TOKEN, validate_config
 from bot.database import init_db
+from bot.admin_handlers import admin_router
 from bot.handlers import router
 from bot.logging_config import setup_logging
 from bot.logo import is_demo_available
@@ -30,6 +31,7 @@ async def _main() -> None:
     else:
         bot = Bot(token=TELEGRAM_BOT_TOKEN)
     dp = Dispatcher()
+    dp.include_router(admin_router)
     dp.include_router(router)
 
     await bot.set_my_commands([
