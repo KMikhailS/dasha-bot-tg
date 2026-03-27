@@ -35,7 +35,7 @@ class IsAdmin(Filter):
 admin_router.message.filter(IsAdmin())
 
 
-@admin_router.message(Command("commands"))
+@admin_router.message(Command("coms"))
 async def cmd_commands(message: Message) -> None:
     """Список всех доступных админ-команд."""
     text = (
