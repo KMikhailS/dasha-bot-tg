@@ -52,6 +52,7 @@ from bot.payment import create_payment, get_payment_status
 from bot.config import SUMMARIZER_MAX_CHARS
 from bot.report_generator import generate_report
 from functools import lru_cache
+from typing import Callable
 from bot.s3_storage import delete_object, download_text
 
 logger = logging.getLogger(__name__)
@@ -103,99 +104,13 @@ HELP_FAQ = {
 async def dispatch_callback(callback: CallbackQuery, state: FSMContext | None = None) -> bool:
     """Обработать callback по префиксу. Возвращает True если обработан."""
     payload = callback.data or ""
-
-    if payload == "menu:main":
-        await _show_main_menu(callback)
+    if handler := _EXACT_ROUTES.get(payload):
+        await handler(callback, state)
         return True
-
-    if payload.startswith("onboarding:"):
-        await _handle_onboarding(callback, payload)
-        return True
-
-    if payload.startswith("demo:"):
-        await _handle_demo_action(callback, payload)
-        return True
-
-    if payload.startswith("scenario:"):
-        await _handle_scenario(callback, payload)
-        return True
-
-    if payload.startswith("record:"):
-        await _handle_record(callback, payload, state)
-        return True
-
-    if payload.startswith("records:page:"):
-        page = int(payload.split(":", 2)[2])
-        user_id = callback.from_user.id
-        records = await asyncio.to_thread(get_user_records, user_id, limit=100)
-        count = len(records)
-        await edit_or_send_logo(
-            callback.message,
-            f"📁 Твои записи ({count} шт.):",
-            reply_markup=records_list_kb(records, page=page),
-            image="my_notes",
-        )
-        return True
-
-    if payload.startswith("summary:gen:"):
-        record_id = payload.split(":", 2)[2]
-        await _handle_report(callback, "summary", record_id)
-        return True
-
-    if payload.startswith("summary:back:"):
-        record_id = payload.split(":", 2)[2]
-        await edit_or_send_logo(callback.message, "✅ Что сделать с текстом?",
-                                reply_markup=post_transcription_kb(record_id))
-        return True
-
-    if payload.startswith("questions:gen:"):
-        record_id = payload.split(":", 2)[2]
-        await _start_qa_mode(callback, record_id, state)
-        return True
-
-    if payload.startswith("questions:back:"):
-        record_id = payload.split(":", 2)[2]
-        if state:
-            await state.clear()
-        await edit_or_send_logo(callback.message, "✅ Что сделать с текстом?",
-                                reply_markup=post_transcription_kb(record_id))
-        return True
-
-    if payload.startswith("report:"):
-        parts = payload.split(":", 2)
-        if len(parts) == 3:
-            report_type, record_id = parts[1], parts[2]
-            await _handle_report(callback, report_type, record_id)
+    for prefix, handler in _PREFIX_ROUTES:
+        if payload.startswith(prefix):
+            await handler(callback, payload, state)
             return True
-
-    if payload.startswith("reports:menu:"):
-        record_id = payload.split(":", 2)[2]
-        await edit_or_send_logo(callback.message, "📊 Дополнительные отчёты:",
-                                reply_markup=reports_submenu_kb(record_id))
-        return True
-
-    if payload.startswith("help:faq:"):
-        topic = payload.split(":", 2)[2]
-        text = HELP_FAQ.get(topic, "Раздел не найден.")
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔙 Назад к вопросам", callback_data="scenario:help")],
-        ])
-        await edit_or_send_logo(callback.message, text, parse_mode="HTML",
-                                reply_markup=kb, image="faq")
-        return True
-
-    if payload.startswith("settings:"):
-        await _handle_settings(callback, payload)
-        return True
-
-    if payload.startswith("plan:"):
-        await _handle_plan(callback, payload, state)
-        return True
-
-    if payload.startswith("referral:"):
-        await _handle_referral_callback(callback, payload)
-        return True
-
     return False
 
 
@@ -315,11 +230,11 @@ async def _start_qa_mode(callback: CallbackQuery, record_id: str, state: FSMCont
     )
 
 
-async def _show_main_menu(callback: CallbackQuery) -> None:
+async def _show_main_menu(callback: CallbackQuery, state: FSMContext | None = None) -> None:
     await edit_or_send_logo(callback.message, MAIN_MENU_TEXT, reply_markup=main_menu_kb())
 
 
-async def _handle_onboarding(callback: CallbackQuery, payload: str) -> None:
+async def _handle_onboarding(callback: CallbackQuery, payload: str, state: FSMContext | None = None) -> None:
     action = payload.split(":", 1)[1] if ":" in payload else ""
 
     if action == "demo":
@@ -342,7 +257,7 @@ async def _handle_onboarding(callback: CallbackQuery, payload: str) -> None:
         await _show_main_menu(callback)
 
 
-async def _handle_demo_action(callback: CallbackQuery, payload: str) -> None:
+async def _handle_demo_action(callback: CallbackQuery, payload: str, state: FSMContext | None = None) -> None:
     """Обработка действий с demo-транскрибацией (текст из памяти, не из БД)."""
     from bot.handlers import get_demo_context
     from bot.keyboards import demo_post_transcription_kb
@@ -400,7 +315,7 @@ async def _handle_demo_action(callback: CallbackQuery, payload: str) -> None:
             pass
 
 
-async def _handle_scenario(callback: CallbackQuery, payload: str) -> None:
+async def _handle_scenario(callback: CallbackQuery, payload: str, state: FSMContext | None = None) -> None:
     scenario = payload.split(":", 1)[1]
 
     if scenario == "record":
@@ -564,7 +479,7 @@ async def _handle_record(callback: CallbackQuery, payload: str, state: FSMContex
             pass
 
 
-async def _handle_settings(callback: CallbackQuery, payload: str) -> None:
+async def _handle_settings(callback: CallbackQuery, payload: str, state: FSMContext | None = None) -> None:
     user_id = callback.from_user.id
     parts = payload.split(":")
 
@@ -847,7 +762,94 @@ async def _show_referral(callback: CallbackQuery) -> None:
                             image="invite_friend")
 
 
-async def _handle_referral_callback(callback: CallbackQuery, payload: str) -> None:
+async def _handle_referral_callback(callback: CallbackQuery, payload: str, state: FSMContext | None = None) -> None:
     """Обработка callback'ов referral:*."""
     # На данный момент все referral: callback'ы ведут на показ реферальной страницы
     await _show_referral(callback)
+
+
+# ── Извлечённые inline-обработчики ───────────────────────
+
+async def _handle_records_page(callback: CallbackQuery, payload: str, state: FSMContext | None = None) -> None:
+    page = int(payload.split(":", 2)[2])
+    user_id = callback.from_user.id
+    records = await asyncio.to_thread(get_user_records, user_id, limit=100)
+    count = len(records)
+    await edit_or_send_logo(
+        callback.message,
+        f"📁 Твои записи ({count} шт.):",
+        reply_markup=records_list_kb(records, page=page),
+        image="my_notes",
+    )
+
+
+async def _handle_summary_gen(callback: CallbackQuery, payload: str, state: FSMContext | None = None) -> None:
+    record_id = payload.split(":", 2)[2]
+    await _handle_report(callback, "summary", record_id)
+
+
+async def _handle_summary_back(callback: CallbackQuery, payload: str, state: FSMContext | None = None) -> None:
+    record_id = payload.split(":", 2)[2]
+    await edit_or_send_logo(callback.message, "✅ Что сделать с текстом?",
+                            reply_markup=post_transcription_kb(record_id))
+
+
+async def _handle_questions_gen(callback: CallbackQuery, payload: str, state: FSMContext | None = None) -> None:
+    record_id = payload.split(":", 2)[2]
+    await _start_qa_mode(callback, record_id, state)
+
+
+async def _handle_questions_back(callback: CallbackQuery, payload: str, state: FSMContext | None = None) -> None:
+    record_id = payload.split(":", 2)[2]
+    if state:
+        await state.clear()
+    await edit_or_send_logo(callback.message, "✅ Что сделать с текстом?",
+                            reply_markup=post_transcription_kb(record_id))
+
+
+async def _handle_report_cb(callback: CallbackQuery, payload: str, state: FSMContext | None = None) -> None:
+    parts = payload.split(":", 2)
+    if len(parts) == 3:
+        report_type, record_id = parts[1], parts[2]
+        await _handle_report(callback, report_type, record_id)
+
+
+async def _handle_reports_menu(callback: CallbackQuery, payload: str, state: FSMContext | None = None) -> None:
+    record_id = payload.split(":", 2)[2]
+    await edit_or_send_logo(callback.message, "📊 Дополнительные отчёты:",
+                            reply_markup=reports_submenu_kb(record_id))
+
+
+async def _handle_help_faq(callback: CallbackQuery, payload: str, state: FSMContext | None = None) -> None:
+    topic = payload.split(":", 2)[2]
+    text = HELP_FAQ.get(topic, "Раздел не найден.")
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 Назад к вопросам", callback_data="scenario:help")],
+    ])
+    await edit_or_send_logo(callback.message, text, parse_mode="HTML",
+                            reply_markup=kb, image="faq")
+
+
+# ── Таблицы маршрутов ─────────────────────────────────────
+
+_EXACT_ROUTES: dict[str, Callable] = {
+    "menu:main": _show_main_menu,
+}
+
+_PREFIX_ROUTES: list[tuple[str, Callable]] = [
+    ("onboarding:", _handle_onboarding),
+    ("demo:", _handle_demo_action),
+    ("scenario:", _handle_scenario),
+    ("records:page:", _handle_records_page),
+    ("record:", _handle_record),
+    ("summary:gen:", _handle_summary_gen),
+    ("summary:back:", _handle_summary_back),
+    ("questions:gen:", _handle_questions_gen),
+    ("questions:back:", _handle_questions_back),
+    ("report:", _handle_report_cb),
+    ("reports:menu:", _handle_reports_menu),
+    ("help:faq:", _handle_help_faq),
+    ("settings:", _handle_settings),
+    ("plan:", _handle_plan),
+    ("referral:", _handle_referral_callback),
+]
