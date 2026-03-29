@@ -5,6 +5,7 @@ import tempfile
 import threading
 import time
 import uuid
+from collections import OrderedDict
 
 from aiogram import Bot, F, Router
 from aiogram.filters import Command, CommandStart
@@ -71,12 +72,22 @@ logger = logging.getLogger(__name__)
 
 router = Router()
 
+_MAX_CACHE = 5000
+
+
+class _BoundedDict(OrderedDict):
+    def __setitem__(self, key, value):
+        super().__setitem__(key, value)
+        if len(self) > _MAX_CACHE:
+            self.popitem(last=False)
+
+
 # Хранилище контекста транскрибации для кнопки "Сделать саммари"
 # Ключ: callback payload (уникальный ID), значение: (text, audio_stem)
-_summary_context: dict[str, tuple[str, str]] = {}
+_summary_context: _BoundedDict = _BoundedDict()
 
 # Per-user блокировка: не даём начать новую транскрибацию, пока предыдущая не завершена
-_user_processing_locks: dict[int, asyncio.Lock] = {}
+_user_processing_locks: _BoundedDict = _BoundedDict()
 
 
 def _get_user_lock(user_id: int) -> asyncio.Lock:
@@ -102,7 +113,7 @@ PREPARING_TEXT = "⏳ Подготавливаю аудио…"
 
 
 # Временное хранилище текста demo-транскрибации (per-user)
-_demo_context: dict[int, str] = {}
+_demo_context: _BoundedDict = _BoundedDict()
 
 
 def get_demo_context(user_id: int) -> str | None:
@@ -187,7 +198,7 @@ INVALID_FILE_TEXT = (
 
 @router.message(CommandStart())
 async def cmd_start(message: Message) -> None:
-    _register_user(message.from_user)
+    await _register_user(message.from_user)
     user_id = message.from_user.id if message.from_user else None
 
     # Обработка deeplink-параметра: /start <payload>
@@ -198,20 +209,20 @@ async def cmd_start(message: Message) -> None:
             if payload.startswith("ref_"):
                 # Реферальная ссылка
                 ref_code = payload[4:]
-                referrer_id = find_user_by_ref_code(ref_code)
+                referrer_id = await asyncio.to_thread(find_user_by_ref_code, ref_code)
                 if referrer_id and referrer_id != user_id:
-                    if add_referral(referrer_id, user_id):
+                    if await asyncio.to_thread(add_referral, referrer_id, user_id):
                         await message.answer(
                             "🎉 Добро пожаловать! Твой друг получил +30 минут за приглашение."
                         )
             else:
                 # Короткая ссылка с UTM-параметрами
-                link = get_short_link(payload)
+                link = await asyncio.to_thread(get_short_link, payload)
                 if link:
-                    track_short_link_visit(payload, user_id)
+                    await asyncio.to_thread(track_short_link_visit, payload, user_id)
                     logger.info("Переход по короткой ссылке %s от пользователя %d", payload, user_id)
 
-    if user_id and not is_user_onboarded(user_id):
+    if user_id and not await asyncio.to_thread(is_user_onboarded, user_id):
         await send_logo(message, ONBOARDING_TEXT, reply_markup=onboarding_kb())
     else:
         await _send_welcome(message)
@@ -243,7 +254,7 @@ async def cmd_upload(message: Message) -> None:
 @router.message(Command("records"))
 async def cmd_records(message: Message) -> None:
     user_id = message.from_user.id if message.from_user else 0
-    records = get_user_records(user_id, limit=100)
+    records = await asyncio.to_thread(get_user_records, user_id, limit=100)
     if not records:
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🎤 Записать аудио", callback_data="scenario:record")],
@@ -267,7 +278,7 @@ async def cmd_records(message: Message) -> None:
 @router.message(Command("plan"))
 async def cmd_plan(message: Message) -> None:
     user_id = message.from_user.id if message.from_user else 0
-    balance = get_user_balance(user_id)
+    balance = await asyncio.to_thread(get_user_balance, user_id)
     if balance == -1:
         balance_str = "безлимит ♾"
     else:
@@ -285,7 +296,7 @@ async def cmd_plan(message: Message) -> None:
 @router.message(Command("balance"))
 async def cmd_balance(message: Message) -> None:
     user_id = message.from_user.id if message.from_user else 0
-    plan_info = get_user_plan_info(user_id)
+    plan_info = await asyncio.to_thread(get_user_plan_info, user_id)
     balance = plan_info["balance"]
     if balance == -1:
         balance_str = "безлимит ♾"
@@ -303,9 +314,9 @@ async def cmd_invite(message: Message) -> None:
     from bot.database import get_referral_count, get_referral_minutes_earned, get_user_ref_code
 
     user_id = message.from_user.id if message.from_user else 0
-    ref_code = get_user_ref_code(user_id)
-    count = get_referral_count(user_id)
-    earned = get_referral_minutes_earned(user_id)
+    ref_code = await asyncio.to_thread(get_user_ref_code, user_id)
+    count = await asyncio.to_thread(get_referral_count, user_id)
+    earned = await asyncio.to_thread(get_referral_minutes_earned, user_id)
 
     bot_info = await message.bot.get_me()
     bot_username = bot_info.username or "dasha_bot"
@@ -332,7 +343,7 @@ async def cmd_help(message: Message) -> None:
 @router.message(Command("settings"))
 async def cmd_settings(message: Message) -> None:
     user_id = message.from_user.id if message.from_user else 0
-    s = get_user_settings(user_id)
+    s = await asyncio.to_thread(get_user_settings, user_id)
     await send_logo(message, "⚙️ Настройки:", reply_markup=settings_kb(s))
 
 
@@ -350,7 +361,8 @@ async def on_audio(message: Message, bot: Bot, state: FSMContext) -> None:
         return
 
     async with lock:
-        if get_user_role(user_id) != "ADMIN" and not has_sufficient_balance(user_id):
+        role = await asyncio.to_thread(get_user_role, user_id)
+        if role != "ADMIN" and not await asyncio.to_thread(has_sufficient_balance, user_id):
             await send_logo(
                 message,
                 "⚠️ У тебя закончились минуты транскрибации.\n"
@@ -433,8 +445,8 @@ async def on_rename_title(message: Message, state: FSMContext) -> None:
         await message.answer("⚠️ Запись не найдена.")
         return
 
-    rename_record(record_id, new_title)
-    record = get_record(record_id)
+    await asyncio.to_thread(rename_record, record_id, new_title)
+    record = await asyncio.to_thread(get_record, record_id)
     if record:
         from bot.keyboards import record_card_kb
         await send_logo(
@@ -492,7 +504,7 @@ async def _process_phone_and_pay(message: Message, state: FSMContext, phone: str
     await state.clear()
 
     user_id = message.from_user.id if message.from_user else 0
-    save_user_phone(user_id, phone)
+    await asyncio.to_thread(save_user_phone, user_id, phone)
 
     # Убираем reply-клавиатуру с кнопкой «Отправить номер»
     await message.answer("✅ Номер сохранён!", reply_markup=ReplyKeyboardRemove())
@@ -521,7 +533,7 @@ async def on_question(message: Message, state: FSMContext) -> None:
         await message.answer("⚠️ Запись не найдена.")
         return
 
-    record = get_record(record_id)
+    record = await asyncio.to_thread(get_record, record_id)
     if not record:
         await state.clear()
         await message.answer("⚠️ Запись не найдена.")
@@ -629,7 +641,8 @@ async def _handle_url(message: Message, url: str) -> None:
         return
 
     async with lock:
-        if get_user_role(user_id) != "ADMIN" and not has_sufficient_balance(user_id):
+        role = await asyncio.to_thread(get_user_role, user_id)
+        if role != "ADMIN" and not await asyncio.to_thread(has_sufficient_balance, user_id):
             await send_logo(
                 message,
                 "⚠️ У тебя закончились минуты транскрибации.\n"
@@ -722,9 +735,10 @@ async def _process_audio(
     # Списываем минуты (округляем вверх), кроме ADMIN
     user_id = message.from_user.id if message.from_user else 0
     if duration_seconds and duration_seconds > 0:
-        if get_user_role(user_id) != "ADMIN":
+        role = await asyncio.to_thread(get_user_role, user_id)
+        if role != "ADMIN":
             minutes_to_deduct = max(1, (duration_seconds + 59) // 60)
-            deduct_balance(user_id, minutes_to_deduct)
+            await asyncio.to_thread(deduct_balance, user_id, minutes_to_deduct)
 
     # Сохраняем запись в БД + текст в S3
     record_id = uuid.uuid4().hex[:16]
@@ -732,7 +746,7 @@ async def _process_audio(
     # Авто-название по первым словам транскрибации для голосовых сообщений
     title = audio_stem[:100] or "Запись"
     if audio_stem.startswith("voice_") or audio_stem.startswith("videonote_"):
-        settings = get_user_settings(user_id)
+        settings = await asyncio.to_thread(get_user_settings, user_id)
         if settings.get("auto_title", 1):
             words = text.strip().split()
             auto = " ".join(words[:6])
@@ -742,7 +756,7 @@ async def _process_audio(
                 title = auto
     try:
         s3_key = await asyncio.to_thread(upload_text, user_id, record_id, text, audio_stem)
-        save_record(
+        await asyncio.to_thread(save_record,
             record_id=record_id,
             user_id=user_id,
             title=title,
@@ -767,7 +781,7 @@ async def _process_audio(
 
 
 async def _handle_sub_info(message: Message, user_id: int) -> None:
-    balance = get_user_balance(user_id)
+    balance = await asyncio.to_thread(get_user_balance, user_id)
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="💳 Оплатить подписку", callback_data="sub_pay")],
         [InlineKeyboardButton(text="⬅️ Назад", callback_data="sub_back")],
@@ -785,12 +799,12 @@ async def _handle_sub_pay(message: Message) -> None:
 
 async def _handle_sub_topup(message: Message, bot: Bot, user_id: int) -> None:
     from bot.database import get_subscription
-    phone = get_user_phone(user_id)
+    phone = await asyncio.to_thread(get_user_phone, user_id)
     if not phone:
         await message.answer("⚠️ Для оплаты необходимо указать номер телефона. Используй /plan для выбора тарифа.")
         return
 
-    plan = get_subscription("basic")
+    plan = await asyncio.to_thread(get_subscription, "basic")
     if not plan:
         await message.answer("⚠️ Тариф не найден.")
         return
@@ -808,7 +822,7 @@ async def _handle_sub_topup(message: Message, bot: Bot, user_id: int) -> None:
     payment_id, payment_url = result
 
     try:
-        save_payment(payment_id, user_id, plan_price, subscription_code="basic")
+        await asyncio.to_thread(save_payment, payment_id, user_id, plan_price, subscription_code="basic")
     except Exception as exc:
         logger.error("Ошибка сохранения платежа %s: %s", payment_id, exc)
 
@@ -913,7 +927,7 @@ async def _handle_summary(message: Message, text: str, audio_stem: str) -> None:
 
 
 
-def _register_user(user: object) -> None:
+async def _register_user(user: object) -> None:
     if not user:
         return
     user_id = getattr(user, "id", None)
@@ -922,7 +936,7 @@ def _register_user(user: object) -> None:
     username = getattr(user, "username", None)
     first_name = getattr(user, "first_name", None)
     try:
-        get_or_create_user(user_id, username, first_name)
+        await asyncio.to_thread(get_or_create_user, user_id, username, first_name)
     except Exception as exc:
         logger.error("Ошибка регистрации пользователя %s: %s", user_id, exc)
 

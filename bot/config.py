@@ -33,11 +33,23 @@ SUPPORTED_AUDIO_EXTENSIONS = {
 
 def validate_config() -> None:
     """Проверяет, что все обязательные переменные окружения заданы."""
-    if not TELEGRAM_BOT_TOKEN:
-        sys.exit("Ошибка: переменная TELEGRAM_BOT_TOKEN не задана")
-    if not OPENAI_API_KEY:
-        sys.exit("Ошибка: переменная OPENAI_API_KEY не задана")
-    if not OPENROUTER_API_KEY:
-        sys.exit("Ошибка: переменная OPENROUTER_API_KEY не задана")
-    if not HF_TOKEN:
-        sys.exit("Ошибка: переменная HF_TOKEN не задана")
+    required = [
+        "TELEGRAM_BOT_TOKEN",
+        "OPENAI_API_KEY",
+        "OPENROUTER_API_KEY",
+        "S3_ACCESS_KEY",
+        "S3_SECRET_KEY",
+        "S3_BUCKET",
+        "S3_ENDPOINT",
+        "TBANK_TERMINAL_KEY",
+        "TBANK_PASSWORD",
+    ]
+    missing = [v for v in required if not os.getenv(v)]
+    if missing:
+        sys.exit(f"Отсутствуют обязательные переменные окружения: {', '.join(missing)}")
+
+    # Опциональные переменные — предупреждение, не ошибка
+    optional = ["HF_TOKEN", "TG_CHANNEL_ID"]
+    for var in optional:
+        if not os.getenv(var):
+            print(f"Предупреждение: переменная {var} не задана (опциональная функция недоступна)")

@@ -121,7 +121,7 @@ async def dispatch_callback(callback: CallbackQuery, state: FSMContext | None = 
     if payload.startswith("records:page:"):
         page = int(payload.split(":", 2)[2])
         user_id = callback.from_user.id
-        records = get_user_records(user_id, limit=100)
+        records = await asyncio.to_thread(get_user_records, user_id, limit=100)
         count = len(records)
         await edit_or_send_logo(
             callback.message,
@@ -221,7 +221,7 @@ async def _load_transcription(record: dict) -> str:
 
 async def _handle_report(callback: CallbackQuery, report_type: str, record_id: str) -> None:
     """Генерация отчёта по record_id и отправка результата."""
-    record = get_record(record_id)
+    record = await asyncio.to_thread(get_record, record_id)
     if not record:
         await edit_or_send_logo(callback.message, "⚠️ Запись не найдена.",
                                 reply_markup=back_to_menu_kb())
@@ -288,7 +288,7 @@ async def _handle_report(callback: CallbackQuery, report_type: str, record_id: s
 
 async def _start_qa_mode(callback: CallbackQuery, record_id: str, state: FSMContext | None) -> None:
     """Перевести пользователя в режим вопросов по тексту."""
-    record = get_record(record_id)
+    record = await asyncio.to_thread(get_record, record_id)
     if not record:
         await edit_or_send_logo(callback.message, "⚠️ Запись не найдена.",
                                 reply_markup=back_to_menu_kb())
@@ -318,7 +318,7 @@ async def _handle_onboarding(callback: CallbackQuery, payload: str) -> None:
 
     if action == "demo":
         # Отмечаем пользователя как прошедшего онбординг
-        set_user_onboarded(callback.from_user.id)
+        await asyncio.to_thread(set_user_onboarded, callback.from_user.id)
         # Отправляем demo-аудиофайл
         sent = await send_demo_audio(callback.message)
         if not sent:
@@ -332,7 +332,7 @@ async def _handle_onboarding(callback: CallbackQuery, payload: str) -> None:
         await process_demo_audio(callback.message, sent)
 
     elif action == "start":
-        set_user_onboarded(callback.from_user.id)
+        await asyncio.to_thread(set_user_onboarded, callback.from_user.id)
         await _show_main_menu(callback)
 
 
@@ -418,7 +418,7 @@ async def _handle_scenario(callback: CallbackQuery, payload: str) -> None:
 
     elif scenario == "records":
         user_id = callback.from_user.id
-        records = get_user_records(user_id, limit=100)
+        records = await asyncio.to_thread(get_user_records, user_id, limit=100)
         if not records:
             from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
             kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -445,7 +445,7 @@ async def _handle_scenario(callback: CallbackQuery, payload: str) -> None:
 
     elif scenario == "plans":
         user_id = callback.from_user.id
-        balance = get_user_balance(user_id)
+        balance = await asyncio.to_thread(get_user_balance, user_id)
         if balance == -1:
             balance_str = "безлимит ♾"
         else:
@@ -470,7 +470,7 @@ async def _handle_record(callback: CallbackQuery, payload: str, state: FSMContex
         return
     action, record_id = parts[1], parts[2]
 
-    record = get_record(record_id)
+    record = await asyncio.to_thread(get_record, record_id)
     if not record:
         await edit_or_send_logo(callback.message, "⚠️ Запись не найдена.",
                                 reply_markup=back_to_menu_kb(),
@@ -524,7 +524,7 @@ async def _handle_record(callback: CallbackQuery, payload: str, state: FSMContex
                 await asyncio.to_thread(delete_object, s3_key)
             except Exception as exc:
                 logger.warning("Не удалось удалить S3 объект %s: %s", s3_key, exc)
-        delete_record(record_id)
+        await asyncio.to_thread(delete_record, record_id)
         await edit_or_send_logo(callback.message, "🗑️ Запись удалена.",
                                 reply_markup=back_to_menu_kb(),
                                 image="my_notes")
@@ -599,22 +599,22 @@ async def _handle_settings(callback: CallbackQuery, payload: str) -> None:
             ])
             await edit_or_send_logo(callback.message, "⏰ Авто-название:", reply_markup=kb)
         elif param == "back":
-            s = get_user_settings(user_id)
+            s = await asyncio.to_thread(get_user_settings, user_id)
             await edit_or_send_logo(callback.message, "⚙️ Настройки:", reply_markup=settings_kb(s))
         return
 
     if len(parts) == 3:
         param, value = parts[1], parts[2]
         if param == "lang":
-            update_user_setting(user_id, "transcription_language", value)
+            await asyncio.to_thread(update_user_setting, user_id, "transcription_language", value)
         elif param == "diarization":
-            update_user_setting(user_id, "diarization", 1 if value == "on" else 0)
+            await asyncio.to_thread(update_user_setting, user_id, "diarization", 1 if value == "on" else 0)
         elif param == "export":
-            update_user_setting(user_id, "export_format", value)
+            await asyncio.to_thread(update_user_setting, user_id, "export_format", value)
         elif param == "autotitle":
-            update_user_setting(user_id, "auto_title", 1 if value == "on" else 0)
+            await asyncio.to_thread(update_user_setting, user_id, "auto_title", 1 if value == "on" else 0)
 
-        s = get_user_settings(user_id)
+        s = await asyncio.to_thread(get_user_settings, user_id)
         await edit_or_send_logo(callback.message, "✅ Настройки обновлены!\n\n⚙️ Настройки:",
                                 reply_markup=settings_kb(s))
 
@@ -628,7 +628,7 @@ async def _handle_plan(callback: CallbackQuery, payload: str, state: FSMContext 
 
     if len(parts) >= 3 and parts[1] == "current":
         # Показать информацию о текущем тарифе
-        plan_info = get_user_plan_info(user_id)
+        plan_info = await asyncio.to_thread(get_user_plan_info, user_id)
         balance = plan_info["balance"]
         if balance == -1:
             balance_str = "безлимит"
@@ -645,7 +645,7 @@ async def _handle_plan(callback: CallbackQuery, payload: str, state: FSMContext 
 
     if len(parts) >= 3 and parts[1] == "buy":
         plan_code = parts[2]
-        plan = get_subscription(plan_code)
+        plan = await asyncio.to_thread(get_subscription, plan_code)
         if not plan:
             await edit_or_send_logo(callback.message, "⚠️ Тариф не найден.",
                                     reply_markup=back_to_menu_kb())
@@ -685,13 +685,13 @@ async def _handle_plan(callback: CallbackQuery, payload: str, state: FSMContext 
 
     if len(parts) >= 3 and parts[1] == "pay":
         plan_code = parts[2]
-        plan = get_subscription(plan_code)
+        plan = await asyncio.to_thread(get_subscription, plan_code)
         if not plan:
             await edit_or_send_logo(callback.message, "⚠️ Тариф не найден.",
                                     reply_markup=back_to_menu_kb())
             return
 
-        phone = get_user_phone(user_id)
+        phone = await asyncio.to_thread(get_user_phone, user_id)
         if not phone:
             # Телефон не указан — запрашиваем перед оплатой
             if state:
@@ -719,7 +719,7 @@ async def _create_and_send_payment(
     phone: str,
 ) -> None:
     """Создать платёж в T-Bank и отправить ссылку на оплату."""
-    plan = get_subscription(plan_code)
+    plan = await asyncio.to_thread(get_subscription, plan_code)
     if not plan:
         await message.answer("⚠️ Тариф не найден.")
         return
@@ -739,7 +739,7 @@ async def _create_and_send_payment(
     payment_id, payment_url = result
 
     try:
-        save_payment(payment_id, user_id, plan_price, subscription_code=plan_code)
+        await asyncio.to_thread(save_payment, payment_id, user_id, plan_price, subscription_code=plan_code)
     except Exception as exc:
         logger.error("Ошибка сохранения платежа %s: %s", payment_id, exc)
 
@@ -819,9 +819,9 @@ def _poll_plan_payment(
 async def _show_referral(callback: CallbackQuery) -> None:
     """Показать реферальную ссылку и статистику."""
     user_id = callback.from_user.id
-    ref_code = get_user_ref_code(user_id)
-    count = get_referral_count(user_id)
-    earned = get_referral_minutes_earned(user_id)
+    ref_code = await asyncio.to_thread(get_user_ref_code, user_id)
+    count = await asyncio.to_thread(get_referral_count, user_id)
+    earned = await asyncio.to_thread(get_referral_minutes_earned, user_id)
 
     bot_info = await callback.message.bot.get_me()
     bot_username = bot_info.username or "dasha_bot"
