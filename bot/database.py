@@ -136,6 +136,11 @@ def init_db() -> None:
         );
     """)
 
+    # ── Индексы ──
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_records_user_id ON records(user_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_records_created_at ON records(created_at DESC)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_payments_user_id ON payments(user_id)")
+
     # ── Миграции для существующих БД (ДО вставки данных) ──
 
     # is_onboarded

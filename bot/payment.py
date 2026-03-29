@@ -103,6 +103,14 @@ def create_payment(amount: int, description: str, phone: str) -> tuple[str, str]
         return None
 
 
+def verify_payment_response(response_data: dict) -> bool:
+    """Проверяет подпись ответа T-Bank."""
+    token = response_data.get("Token", "")
+    data_without_token = {k: v for k, v in response_data.items() if k != "Token"}
+    expected_token = _generate_token(data_without_token)
+    return token == expected_token
+
+
 def get_payment_status(payment_id: str) -> str | None:
     """Получить статус платежа из T-Bank.
 
@@ -123,6 +131,11 @@ def get_payment_status(payment_id: str) -> str | None:
         )
         resp.raise_for_status()
         data = resp.json()
+
+        if not verify_payment_response(data):
+            logger.warning("Платёж %s: подпись ответа T-Bank не совпадает, ответ отклонён", payment_id)
+            return None
+
         raw_status = data.get("Status", "")
         error_code = data.get("ErrorCode", "0")
         error_message = data.get("Message", "")
