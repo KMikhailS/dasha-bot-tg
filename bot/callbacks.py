@@ -51,9 +51,15 @@ from bot.logo import edit_or_send_logo, send_demo_audio, send_logo
 from bot.payment import create_payment, get_payment_status
 from bot.config import SUMMARIZER_MAX_CHARS
 from bot.report_generator import generate_report
+from functools import lru_cache
 from bot.s3_storage import delete_object, download_text
 
 logger = logging.getLogger(__name__)
+
+
+@lru_cache(maxsize=200)
+def _cached_download_text(s3_key: str) -> str:
+    return download_text(s3_key)
 
 MAIN_MENU_TEXT = (
     "👋 Привет! Я Даша.\n\n"
@@ -214,7 +220,7 @@ async def _load_transcription(record: dict) -> str:
     """Загрузить текст транскрипции из S3 (или из БД для старых записей)."""
     s3_key = record.get("text_s3_key")
     if s3_key:
-        return await asyncio.to_thread(download_text, s3_key)
+        return await asyncio.to_thread(_cached_download_text, s3_key)
     # Fallback для старых записей, сохранённых в БД
     return record.get("transcription_text") or ""
 

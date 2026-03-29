@@ -349,6 +349,36 @@ async def cmd_settings(message: Message) -> None:
 
 
 @router.message(F.audio | F.voice | F.video_note | F.video | F.document)
+async def _extract_audio_meta(message: Message) -> tuple[str, str, bool] | None:
+    """Возвращает (file_id, filename, is_video) или None при неподдерживаемом формате."""
+    if message.audio:
+        return message.audio.file_id, message.audio.file_name or f"audio_{message.audio.file_id}.mp3", False
+    if message.voice:
+        return message.voice.file_id, f"voice_{message.voice.file_id}.ogg", False
+    if message.video_note:
+        return message.video_note.file_id, f"videonote_{message.video_note.file_id}.mp4", True
+    if message.video:
+        return message.video.file_id, message.video.file_name or f"video_{message.video.file_id}.mp4", True
+    if message.document:
+        filename = message.document.file_name or ""
+        ext = os.path.splitext(filename)[1].lower()
+        if ext not in SUPPORTED_AUDIO_EXTENSIONS:
+            await send_logo(message, INVALID_FILE_TEXT,
+                            reply_markup=error_kb("unsupported_format"), image="error")
+            return None
+        return message.document.file_id, filename, False
+    await send_logo(message, INVALID_FILE_TEXT,
+                    reply_markup=error_kb("unsupported_format"), image="error")
+    return None
+
+
+async def _download_tg_file(bot: Bot, file_id: str, dest_path: str) -> None:
+    """Скачивает файл из Telegram по file_id в dest_path."""
+    tg_file = await bot.get_file(file_id)
+    await bot.download_file(tg_file.file_path, dest_path)
+    logger.info("Скачан файл: %s", dest_path)
+
+
 async def on_audio(message: Message, bot: Bot, state: FSMContext) -> None:
     if await state.get_state() is not None:
         await state.clear()
@@ -372,43 +402,17 @@ async def on_audio(message: Message, bot: Bot, state: FSMContext) -> None:
             )
             return
 
-        is_video = False
-
-        if message.audio:
-            file_id = message.audio.file_id
-            filename = message.audio.file_name or f"audio_{file_id}.mp3"
-        elif message.voice:
-            file_id = message.voice.file_id
-            filename = f"voice_{file_id}.ogg"
-        elif message.video_note:
-            file_id = message.video_note.file_id
-            filename = f"videonote_{file_id}.mp4"
-            is_video = True
-        elif message.video:
-            file_id = message.video.file_id
-            filename = message.video.file_name or f"video_{file_id}.mp4"
-            is_video = True
-        elif message.document:
-            file_id = message.document.file_id
-            filename = message.document.file_name or ""
-            ext = os.path.splitext(filename)[1].lower()
-            if ext not in SUPPORTED_AUDIO_EXTENSIONS:
-                await send_logo(message, INVALID_FILE_TEXT,
-                                reply_markup=error_kb("unsupported_format"), image="error")
-                return
-        else:
-            await send_logo(message, INVALID_FILE_TEXT,
-                            reply_markup=error_kb("unsupported_format"), image="error")
+        meta = await _extract_audio_meta(message)
+        if meta is None:
             return
+        file_id, filename, is_video = meta
 
         status_msg = await message.answer(DOWNLOADING_TEXT)
         tmp_dir = tempfile.mkdtemp(prefix="transcriber_")
 
         try:
             dest_path = os.path.join(tmp_dir, filename)
-            tg_file = await bot.get_file(file_id)
-            await bot.download_file(tg_file.file_path, dest_path)
-            logger.info("Скачан файл: %s", dest_path)
+            await _download_tg_file(bot, file_id, dest_path)
 
             if is_video:
                 dest_path = await extract_audio(dest_path)
