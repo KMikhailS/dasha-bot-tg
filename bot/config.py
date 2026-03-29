@@ -11,6 +11,7 @@ OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 TBANK_TERMINAL_KEY = os.getenv("TBANK_TERMINAL_KEY", "")
 TBANK_PASSWORD = os.getenv("TBANK_PASSWORD", "")
 TBANK_TAXATION = os.getenv("TBANK_TAXATION", "usn_income")  # система налогообложения
+HF_TOKEN = os.getenv("HF_TOKEN", "")
 
 # Telegram Local Bot API
 TELEGRAM_API_ID = os.getenv("TELEGRAM_API_ID", "")
@@ -38,3 +39,5 @@ def validate_config() -> None:
         sys.exit("Ошибка: переменная OPENAI_API_KEY не задана")
     if not OPENROUTER_API_KEY:
         sys.exit("Ошибка: переменная OPENROUTER_API_KEY не задана")
+    if not HF_TOKEN:
+        sys.exit("Ошибка: переменная HF_TOKEN не задана")
