@@ -348,7 +348,6 @@ async def cmd_settings(message: Message) -> None:
 
 
 
-@router.message(F.audio | F.voice | F.video_note | F.video | F.document)
 async def _extract_audio_meta(message: Message) -> tuple[str, str, bool] | None:
     """Возвращает (file_id, filename, is_video) или None при неподдерживаемом формате."""
     if message.audio:
@@ -379,6 +378,7 @@ async def _download_tg_file(bot: Bot, file_id: str, dest_path: str) -> None:
     logger.info("Скачан файл: %s", dest_path)
 
 
+@router.message(F.audio | F.voice | F.video_note | F.video | F.document)
 async def on_audio(message: Message, bot: Bot, state: FSMContext) -> None:
     if await state.get_state() is not None:
         await state.clear()
